@@ -1,0 +1,22 @@
+# 依赖与构建产物
+node_modules/
+.wrangler/
+dist/
+
+# 本地运行产物
+*.log
+dev/server.log
+
+# 设计过程草稿（AI 生成的风格参考图，不进产品也不进仓库）
+vibe_images/
+
+# 环境变量与密钥
+.env
+.env.*
+*.dev.vars
+
+# 编辑器与系统
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
