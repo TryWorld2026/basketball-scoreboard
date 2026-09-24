@@ -5,8 +5,9 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const R = (f) => fileURLToPath(new URL(f, import.meta.url));
-const RULES = R('../functions/shared/rules.mjs');
-const HANDLER = R('../functions/handler.mjs');
+const RULES = R('../worker/rules.mjs');
+const HANDLER = R('../worker/handler.mjs');
+const FAKESTORE = R('../dev/fake-store.mjs');
 
 const mutants = [
   {
@@ -84,10 +85,10 @@ const mutants = [
     suite: 'attack', mustRedOn: '未归零时 clock_zero 不推进节次',
   },
   {
-    name: 'M10 CAS 条件丢失（并发丢分）',
-    file: HANDLER,
-    from: `.eq('code', code).eq('version', expectedVersion)`,
-    to: `.eq('code', code)`,
+    name: 'M10 CAS 版本条件被忽略（并发丢分）',
+    file: FAKESTORE,
+    from: `if (!row || row.version !== expectedVersion) return { changed: false, version: expectedVersion + 1 };`,
+    to: `if (!row) return { changed: false, version: expectedVersion + 1 };`,
     suite: 'attack', mustRedOn: '两笔都应落地（CAS 重放不丢分）',
   },
   {

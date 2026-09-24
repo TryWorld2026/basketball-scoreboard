@@ -50,7 +50,7 @@ export class GameStore {
 
   async _tick() {
     try {
-      const snap = await api(`/functions/v1/app?action=get&code=${encodeURIComponent(this.code)}`);
+      const snap = await api(`/api/game?action=get&code=${encodeURIComponent(this.code)}`);
       this._accept(snap);
       this.loading = false;
       this.online = true;
@@ -84,7 +84,7 @@ export class GameStore {
 
   async _post(action) {
     try {
-      const snap = await api('/functions/v1/app?action=apply', {
+      const snap = await api('/api/game?action=apply', {
         method: 'POST',
         body: { code: this.code, version: this.version, action },
       });

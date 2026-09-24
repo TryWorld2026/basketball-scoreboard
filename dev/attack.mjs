@@ -1,8 +1,8 @@
 // 对抗式探针 —— 专打 dev/smoke.mjs 从未询问的维度。每个场景独立假库，避免残留状态伪装成缺陷。
 // 运行：node dev/attack.mjs
-import { handleGames } from '../functions/handler.mjs';
-import { applyAction, emptyState, sanitizeConfig, sanitizeTeams } from '../functions/shared/rules.mjs';
-import { createFakeSupabase } from './fake-supabase.mjs';
+import { handleGames } from '../worker/handler.mjs';
+import { applyAction, emptyState, sanitizeConfig, sanitizeTeams } from '../worker/rules.mjs';
+import { createFakeStore } from './fake-store.mjs';
 
 let pass = 0; let fail = 0; const bugs = [];
 const ok = (name, cond, detail = '') => {
@@ -11,14 +11,14 @@ const ok = (name, cond, detail = '') => {
 };
 
 function fresh() {
-  const supabase = createFakeSupabase();
+  const store = createFakeStore();
   const call = async (method, qs, body) => {
-    const req = new Request(`http://s/functions/v1/app?${qs}`, {
+    const req = new Request(`http://s/api/game?${qs}`, {
       method,
       headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
       body: body !== undefined ? (typeof body === 'string' ? body : JSON.stringify(body)) : undefined,
     });
-    const res = await handleGames({ request: req, supabase });
+    const res = await handleGames({ request: req, store });
     let json = null; try { json = await res.json(); } catch { /* */ }
     return { status: res.status, json };
   };
@@ -38,11 +38,11 @@ function fresh() {
     });
     return { code: c.json.code, v: () => get(c.json.code) };
   };
-  return { supabase, call, raw, apply, get, newGame };
+  return { store, call, raw, apply, get, newGame };
 }
 
 // 直接改库（模拟时钟耗尽等外部事件），返回新版本
-function poke(supabase, code, fn) { const row = supabase._store.get(code); fn(row); return row; }
+function poke(store, code, fn) { const row = store._rows.get(code); fn(row); return row; }
 
 console.log('\n[1] 幂等性：同一意图补发只记一次（户外丢包场景）');
 {
@@ -123,7 +123,7 @@ console.log('\n[5] 类型强制：null/字符串/对象混进数字字段');
 
 console.log('\n[6] 暂停与犯规的边界');
 {
-  const { apply, get, newGame, supabase } = fresh();
+  const { apply, get, newGame, store } = fresh();
   const { code } = await newGame();
   const t0 = await apply(code, { type: 'timeout', team: 0 });
   ok('未开打请求暂停应被拒', t0.json?.error === 'game_not_started', JSON.stringify(t0.json?.error));
@@ -134,7 +134,7 @@ console.log('\n[6] 暂停与犯规的边界');
   const t2 = await apply(code, { type: 'timeout', team: 1 });
   ok('暂停中再请求暂停应被拒', t2.json?.error === 'timeout_only_in_play', JSON.stringify(t2.json?.error));
   // 结束暂停倒计时
-  poke(supabase, code, (row) => { row.state.clock.remainingMs = -10; row.state.clock.running = true; row.state.clock.since = new Date().toISOString(); });
+  poke(store, code, (row) => { row.state.clock.remainingMs = -10; row.state.clock.running = true; row.state.clock.since = new Date().toISOString(); });
   const z = await apply(code, { type: 'clock_zero' });
   ok('暂停倒计时归零回到比赛计时（停表）', z.json.state.clock.mode === 'game' && !z.json.state.clock.running, JSON.stringify(z.json.state.clock));
   for (let i = 0; i < 6; i += 1) await apply(code, { type: 'foul', team: 1 });
@@ -163,10 +163,10 @@ console.log('\n[7] 不可逆性与状态泄漏：reset 之后');
 
 console.log('\n[8] 无界增长：一场 40 分钟比赛 400 次操作后状态体积');
 {
-  const { apply, get, newGame, supabase } = fresh();
+  const { apply, get, newGame, store } = fresh();
   const { code } = await newGame();
   for (let i = 0; i < 400; i += 1) await apply(code, { type: 'score', team: i % 2, points: (i % 3) + 1 });
-  const raw = supabase._store.get(code);
+  const raw = store._rows.get(code);
   const bytes = JSON.stringify(raw.state).length;
   ok('400 次操作后 state 体积 < 4KB', bytes < 4096, `实际 ${bytes}B`);
   const g = await get(code);

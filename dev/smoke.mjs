@@ -1,9 +1,9 @@
 // 主流程冒烟测试：直接驱动 handler + 内存假库，验证规则引擎与写路径。
 // 运行：node dev/smoke.mjs
-import { handleGames } from '../functions/handler.mjs';
-import { createFakeSupabase } from './fake-supabase.mjs';
+import { handleGames } from '../worker/handler.mjs';
+import { createFakeStore } from './fake-store.mjs';
 
-const supabase = createFakeSupabase();
+const store = createFakeStore();
 let pass = 0; let fail = 0;
 const check = (name, cond, extra = '') => {
   if (cond) { pass += 1; console.log(`  ok  ${name}`); }
@@ -11,12 +11,12 @@ const check = (name, cond, extra = '') => {
 };
 
 async function call(method, qs, body) {
-  const req = new Request(`http://site/functions/v1/app?${qs}`, {
+  const req = new Request(`http://site/api/game?${qs}`, {
     method,
     headers: body ? { 'content-type': 'application/json' } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   });
-  const res = await handleGames({ request: req, supabase });
+  const res = await handleGames({ request: req, store });
   let json = null;
   try { json = await res.json(); } catch { /* ignore */ }
   return { status: res.status, json };
@@ -65,7 +65,7 @@ r = await apply(code, version, { type: 'clock_stop' }); version = r.json.version
 check('停止计时', r.json.state.clock.running === false);
 
 console.log('— 归零自动进节（直接改库模拟时钟耗尽）—');
-const row = supabase._store.get(code);
+const row = store._rows.get(code);
 row.state.clock.running = true;
 row.state.clock.since = new Date().toISOString();
 row.state.clock.remainingMs = -10;
@@ -73,13 +73,13 @@ r = await apply(code, row.version, { type: 'clock_zero' }); version = r.json.ver
 check('归零后进入节间', r.json.state.clock.mode === 'break' && r.json.state.clock.period === 2, JSON.stringify(r.json?.state?.clock));
 check('新一节犯规清零', r.json.state.teams[1].fouls === 0);
 // 节间归零 → 回比赛模式
-const row2 = supabase._store.get(code);
+const row2 = store._rows.get(code);
 row2.state.clock.remainingMs = -10;
 r = await apply(code, row2.version, { type: 'clock_zero' }); version = r.json.version;
 check('节间结束回比赛计时', r.json.state.clock.mode === 'game' && r.json.state.clock.running === false);
 
 console.log('— 末节平局自动加时 —');
-const row3 = supabase._store.get(code);
+const row3 = store._rows.get(code);
 row3.state.teams[0].score = 30; row3.state.teams[1].score = 30;
 row3.state.clock.period = 2; row3.state.clock.mode = 'game'; row3.state.clock.running = true;
 row3.state.clock.since = new Date().toISOString(); row3.state.clock.remainingMs = -10;
@@ -87,7 +87,7 @@ r = await apply(code, row3.version, { type: 'clock_zero' }); version = r.json.ve
 check('平局进加时', r.json.state.clock.period === 3 && r.json.status === 'live', JSON.stringify(r.json?.state?.clock));
 
 console.log('— 暂停 —');
-const row4 = supabase._store.get(code);
+const row4 = store._rows.get(code);
 row4.state.clock.mode = 'game'; row4.state.clock.running = false;
 r = await apply(code, row4.version, { type: 'timeout', team: 0 }); version = r.json.version;
 check('暂停倒计时启动', r.json.state.clock.mode === 'timeout' && r.json.state.teams[0].timeoutsLeft === 2);

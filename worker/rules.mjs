@@ -91,7 +91,7 @@ export function emptyState(config, teams, players) {
   };
 }
 
-// ---------- 时钟推算（各端一致；前端有镜像实现，改这里要同步改 web/js/clock.js） ----------
+// ---------- 时钟推算（各端一致；前端有镜像实现，改这里要同步改 public/js/clock.js） ----------
 
 export function deriveRemaining(c, nowMs) {
   if (!c.running || !c.since) return Math.max(0, c.remainingMs);

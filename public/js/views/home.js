@@ -81,7 +81,7 @@ export default {
       submit.disabled = true;
       submit.textContent = '创建中…';
       try {
-        const res = await api('/functions/v1/app?action=create', {
+        const res = await api('/api/game?action=create', {
           method: 'POST',
           body: {
             teams: [{ name: A.name, color: A.color }, { name: B.name, color: B.color }],

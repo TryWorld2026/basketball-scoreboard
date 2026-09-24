@@ -61,7 +61,7 @@
 - **字体**：`system-ui` 粗体用于队名/标签；数字一律走 LED 组件。
 - **状态色**：BONUS = 红色脉冲；暂停 = 琥珀色；归零 = 全屏红闪 2 次；信号弱 = 整体降饱和 + 灰角标。
 - **色盲友好**：颜色永远配合文字标签（"主队/客队"+队名），不单独用颜色编码。
-- 三张 AI 风格图（`vibe_images/`）仅为方向参考，不进入产品。
+- 三张 AI 风格图（本地 `vibe_images/`，未纳入版本库）仅为方向参考，不进入产品。
 
 ### 4.2 建赛页 `/`
 
@@ -174,7 +174,7 @@ create table games (
 ## 7. 同步与动作模型
 
 ```
-客户端                          Edge Function (app)              Supabase
+客户端                          Worker (handler)                  D1
   │ POST apply{code,version,意图} ─▶ 读 state+version
   │                                 CAS: update where version=期望
   │                                 0行受影响 → 重读重放（≤3次）→ 仍冲突返回409
@@ -211,13 +211,15 @@ create table games (
 
 ---
 
-## 9. 技术选型与平台契约
+## 9. 技术选型与部署契约
 
-- **前端**：纯静态 SPA（原生 ES modules，无框架无构建），`web/` 为 `webDirectory`。二维码用 vendored 轻量库（qrcode-generator，MIT，单文件）。
-- **服务端**：一个 `app` Edge Function（`functions/`，Deno），浏览器只调同源 `/functions/v1/app`。
-- **数据库**：Supabase 适配器（SDK 钉 2.57.4，三文件模板），`databaseAccess: read_write` + `requiredSchemaVersion`。匿名策略：`games` 表 SELECT/INSERT/UPDATE 开放给 anon——数据本身即"房间码持有者共享"，无私密性要求；DB 密钥只在 Function 侧，浏览器摸不到。
-- **本地开发**：`dev/server.mjs`（Node，零依赖）——静态服务 + SPA 回退 + `/functions/v1/app` 直接调用 `handler.mjs` 并注入内存版假 supabase。跑通全链路不依赖云资源；部署后用一次真实请求验证集成。
+**部署平台变更记录（2026-09-24）**：首版按 Qoder Sites（静态 + Edge Function + Supabase 适配器）实现并本地验证通过，但平台侧建站请求持续返回通用失败，云资源无法分配；同日改投 **Cloudflare Workers + D1** 并完成部署与线上验证。规则引擎与前端一行未动，只替换了数据访问层——这验证了当初"handler 只依赖注入的 store 接口"的分层是对的。
+
+- **前端**：纯静态 SPA（原生 ES modules，无框架无构建），目录 `public/`，由 Workers Assets 托管，SPA 回退用 `not_found_handling: single-page-application`。
+- **服务端**：`worker/index.js` 为 Workers 入口，`/api/*` 走业务 handler，其余交给静态资源绑定。业务层 `worker/handler.mjs` 只依赖 store 接口（`getGame / insertGame / casUpdateGame / deleteStaleSetup`）。
+- **数据库**：Cloudflare D1（SQLite）。整场状态一个 JSON 文本列 + `version` 列；并发写用 `UPDATE ... WHERE code = ? AND version = ?` 的**影响行数**判定 CAS，这是真实 SQL 语义，不是内存假库的模拟。
 - **客户端能力**：WakeLock、navigator.vibrate、WebAudio 合成蜂鸣（归零长鸣/进节双响/暂停短促）、canvas 导出 PNG。
+- **本地开发**：`wrangler dev`（本地 D1 仿真）跑真实链路；`npm test` 三张网跑内存假库，零云依赖。
 
 ## 10. 验收标准与实测结果
 
@@ -230,7 +232,7 @@ create table games (
 7. 结束 → 数据卡数字与过程一致 → 存 PNG 成功 —— 实测通过（1080×1440 / 168KB）
 8. 断网操作排队、恢复补发不丢分且不重复计分 —— 幂等键实测（请求体带 nonce）
 9. 错误房间码 → 友好提示 —— 实测通过
-10. 部署后一次真实 apply 请求通过 —— **待发布后执行**
+10. 部署后真实请求验证 —— **已完成**：`node dev/d1-check.mjs <线上地址>` 对 Cloudflare 生产环境 27/27 通过（含真 SQL CAS、幂等 noop、并发双写、SPA 深链、no-store），并在浏览器中确认跨进程写入经轮询反映到大屏
 
 **测试网（本地）**：`node dev/smoke.mjs` 27 项主流程；`node dev/attack.mjs` 60 项对抗探针（幂等、并发、跳节滥用、类型强制、不可逆性、无界增长、注入面、协议健壮性、胜负判定）；`node dev/mutate.mjs` 15 个变异体全部被击杀（证明每条断言都不是空断言）。
 

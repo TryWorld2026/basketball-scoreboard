@@ -1,0 +1,17 @@
+{
+  "name": "basketball-scoreboard",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "校园班赛篮球计分板：手机当遥控器，任何屏幕当官方记分牌，赛后一键生成数据卡。Cloudflare Workers + D1。",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply scoreboard-db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply scoreboard-db --remote",
+    "test": "node dev/smoke.mjs && node dev/attack.mjs && node dev/mutate.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.112.0"
+  }
+}
