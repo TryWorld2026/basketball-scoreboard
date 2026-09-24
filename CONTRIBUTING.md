@@ -22,7 +22,9 @@ npm test
 
 三张网分别是主流程冒烟、对抗探针、变异测试。**变异测试是这里的门槛**：它把每处修复逐个还原，要求断言必须变红、且红在该管它的断言上。新增修复时，请同时往 `dev/mutate.mjs` 里加对应变异体——否则那条修复等于没被测到。
 
-改动规则引擎时，`node dev/d1-check.mjs <baseUrl>` 可以再打一遍真实 SQL 链路。
+CI（`.github/workflows/test.yml`）会在每次 push 和 PR 上跑这套；部署走 Cloudflare Workers Builds，与本仓库的测试门禁互不相干。
+
+改动规则引擎时，`node dev/d1-check.mjs <baseUrl>` 可以再打一遍真实 SQL 链路（本地 `wrangler dev` 起的地址或线上域名都行）。
 
 ## 代码结构约定
 

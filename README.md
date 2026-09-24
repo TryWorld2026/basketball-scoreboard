@@ -101,14 +101,12 @@ npx wrangler deploy
 
 ### 推送即自动部署
 
-`.github/workflows/deploy.yml` 在 push 到 `main` 时跑测试网、应用 D1 迁移并部署 Worker。
-需要在仓库 Secrets 里配置两项（Cloudflare 控制台 My Profile → API Tokens 创建，权限给
-`Workers Scripts: Edit` 与 `D1: Edit`）：
+用 Cloudflare 原生的 **Workers Builds** 接 GitHub：Worker 详情页 → Settings → Builds →
+Connect to Git，选本仓库、生产分支 `main`。此后每次 push 到 `main` 自动构建并部署，
+**GitHub 侧不需要存任何凭据**（Cloudflare 自己管），PR 还会自动带上预览链接。
 
-```bash
-gh secret set CLOUDFLARE_API_TOKEN          # 交互式粘贴，不要写进命令行历史
-gh secret set CLOUDFLARE_ACCOUNT_ID         # 见 Cloudflare 右侧栏 Account ID
-```
+`.github/workflows/test.yml` 只负责把三张测试网当合并门禁跑一遍，不参与部署。
+建库和迁移仍按上面的命令手动执行——Workers Builds 不会替你跑 D1 迁移。
 
 ## 技术栈
 
