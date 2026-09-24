@@ -12,7 +12,7 @@ npm run db:migrate:local
 npm run dev            # http://127.0.0.1:8787
 ```
 
-要求 Node 18+（用到原生 `fetch` / `Request` / `Response` / `structuredClone`）。部署预览需要 Cloudflare 账号与 `npx wrangler login`，但**跑测试不需要任何云账号**。
+要求 Node 22+（wrangler 部署需要；只跑 `npm test` 的话 Node 18+ 即可，测试不碰云）。部署预览需要 Cloudflare 账号与 `npx wrangler login`，但**跑测试不需要任何云账号**。
 
 ## 提交前必须全绿
 

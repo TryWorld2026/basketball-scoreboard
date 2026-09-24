@@ -99,6 +99,17 @@ npx wrangler d1 migrations apply scoreboard-db --remote
 npx wrangler deploy
 ```
 
+### 推送即自动部署
+
+`.github/workflows/deploy.yml` 在 push 到 `main` 时跑测试网、应用 D1 迁移并部署 Worker。
+需要在仓库 Secrets 里配置两项（Cloudflare 控制台 My Profile → API Tokens 创建，权限给
+`Workers Scripts: Edit` 与 `D1: Edit`）：
+
+```bash
+gh secret set CLOUDFLARE_API_TOKEN          # 交互式粘贴，不要写进命令行历史
+gh secret set CLOUDFLARE_ACCOUNT_ID         # 见 Cloudflare 右侧栏 Account ID
+```
+
 ## 技术栈
 
 Cloudflare Workers · D1 · 原生 ES Module · Web Audio（合成蜂鸣，无音频文件）· WakeLock（防锁屏）· Canvas（数据卡导出）· wrangler
