@@ -113,9 +113,22 @@ export function deriveShot(state, nowMs) {
 
 // ---------- 动作应用 ----------
 
-const snapshot = (s) => clone({ teams: s.teams, players: s.players, clock: s.clock, shot: s.shot, possession: s.possession });
+// 撤销快照把运行中的时钟"冻结"成快照时刻的显示值（running=false, since=null）。
+// 为什么必须冻结而不是原样存 since：
+//   原样存绝对 since 的话，撤销一次「停表」会让停表那段真实时间被当成比赛时间消耗掉
+//   （时钟凭空向下跳），且这件事对记分员完全不可见。冻结后，撤销只回退数据，
+//   时钟停在动作发生那一刻，是否继续走由记分员显式按「开始」决定。
+const frozen = (c, nowMs) => (c.running && c.since
+  ? { ...c, running: false, since: null, remainingMs: deriveRemaining(c, nowMs) }
+  : { ...c });
 
-function pushUndo(s) { s.undo = snapshot(s); }
+const snapshot = (s, nowMs) => clone({
+  teams: s.teams, players: s.players,
+  clock: frozen(s.clock, nowMs), shot: frozen(s.shot, nowMs),
+  possession: s.possession,
+});
+
+function pushUndo(s, nowMs) { s.undo = snapshot(s, nowMs); }
 
 function activate(s, nowIso) {
   if (s.status === 'setup') { s.status = 'live'; s.startedAt = iso(nowIso); }
@@ -206,18 +219,26 @@ function runAction(s, action, nowIso, nowMs) {
       if (![1, 2, 3].includes(points)) return { error: 'invalid_points' };
       if (s.clock.mode !== 'game') return { error: 'not_in_play' }; // 休息/暂停期间的加分会串到下一节，一律拒
       activate(s, nowIso);
-      pushUndo(s);
+      pushUndo(s, nowMs);
       const t = s.teams[team];
       t.score += points;
       const idx = Math.min(t.periodScores.length, s.clock.period) - 1;
       t.periodScores[idx] += points;
       t.stats[`pts${points}`] += 1;
       if (action.playerId != null) {
-        const p = s.players.find((x) => x.team === team && x.name === String(action.playerId));
+        if (typeof action.playerId !== 'string') return { error: 'invalid_player' }; // 数组/数字会被 String() 静默吞成球员名
+        const p = s.players.find((x) => x.team === team && x.name === action.playerId);
         if (!p) return { error: 'invalid_player' };
         p.points += points;
       }
-      if (s.config.shotClock) s.shot = { running: false, since: null, remainingMs: s.config.shotClockSeconds * 1000 };
+      // 进球后 24 秒归满并继续走（比赛时钟在跑就跑）；旧实现直接停表，
+      // 而 clock_start 又因 already_running 被拒，导致进球后 24 秒永远冻结。
+      if (s.config.shotClock) {
+        s.shot = {
+          running: s.clock.running, since: s.clock.running ? iso(nowIso) : null,
+          remainingMs: s.config.shotClockSeconds * 1000,
+        };
+      }
       s.possession = 1 - team;
       return { state: s };
     }
@@ -226,7 +247,7 @@ function runAction(s, action, nowIso, nowMs) {
       if (team !== 0 && team !== 1) return { error: 'invalid_team' };
       if (s.clock.mode !== 'game') return { error: 'not_in_play' };
       activate(s, nowIso);
-      pushUndo(s);
+      pushUndo(s, nowMs);
       s.teams[team].fouls += 1;
       return { state: s };
     }
@@ -237,7 +258,7 @@ function runAction(s, action, nowIso, nowMs) {
       if (s.clock.mode !== 'game') return { error: 'timeout_only_in_play' };
       const t = s.teams[team];
       if (t.timeoutsLeft <= 0) return { error: 'no_timeouts_left' };
-      pushUndo(s);
+      pushUndo(s, nowMs);
       stopGameClock(s, nowMs);
       t.timeoutsLeft -= 1;
       s.clock.gameRemainingMs = s.clock.remainingMs;
@@ -253,7 +274,7 @@ function runAction(s, action, nowIso, nowMs) {
       if (s.clock.mode === 'timeout' || s.clock.mode === 'break') return { error: 'wait_countdown_end' };
       if (s.clock.running) return { error: 'already_running' };
       activate(s, nowIso);
-      pushUndo(s);
+      pushUndo(s, nowMs);
       s.clock.running = true;
       s.clock.since = iso(nowIso);
       if (s.config.shotClock && s.shot.remainingMs > 0) { s.shot.running = true; s.shot.since = iso(nowIso); }
@@ -262,7 +283,7 @@ function runAction(s, action, nowIso, nowMs) {
     case 'clock_stop': {
       if (s.clock.mode !== 'game') return { error: 'not_in_play' };
       if (!s.clock.running) return { error: 'already_stopped' };
-      pushUndo(s);
+      pushUndo(s, nowMs);
       stopGameClock(s, nowMs);
       if (s.config.shotClock && s.shot.running) {
         s.shot.remainingMs = deriveRemaining(s.shot, nowMs);
@@ -272,14 +293,14 @@ function runAction(s, action, nowIso, nowMs) {
     }
     case 'shot_reset': {
       if (!s.config.shotClock) return { error: 'shot_clock_off' };
-      pushUndo(s);
+      pushUndo(s, nowMs);
       s.shot = { running: s.clock.running && s.clock.mode === 'game', since: s.clock.running ? iso(nowIso) : null, remainingMs: s.config.shotClockSeconds * 1000 };
       return { state: s };
     }
     case 'possession': {
       const team = strictInt(action.team);
       if (team !== 0 && team !== 1) return { error: 'invalid_team' };
-      pushUndo(s);
+      pushUndo(s, nowMs);
       s.possession = team;
       return { state: s };
     }
@@ -287,7 +308,7 @@ function runAction(s, action, nowIso, nowMs) {
       // 仅当时钟确实归零时生效（幂等，防提前跳节）
       const d = deriveClock(s, nowMs);
       if (!d.zero) return { state: s };
-      if (s.clock.mode === 'game') { pushUndo(s); endPeriod(s, nowIso); }
+      if (s.clock.mode === 'game') { pushUndo(s, nowMs); endPeriod(s, nowIso); }
       else if (s.clock.mode === 'timeout') { s.clock.mode = 'game'; s.clock.running = false; s.clock.since = null; s.clock.remainingMs = s.clock.gameRemainingMs; s.clock.timeoutTeam = null; }
       else if (s.clock.mode === 'break') { s.clock.mode = 'game'; s.clock.running = false; s.clock.since = null; s.clock.remainingMs = s.clock.gameRemainingMs; }
       return { state: s };
@@ -295,12 +316,12 @@ function runAction(s, action, nowIso, nowMs) {
     case 'period_next': {
       // 手动跳节（记分员权限）：休息中则提前结束休息，暂停中先收回暂停再跳节
       if (s.clock.mode === 'break') {
-        pushUndo(s);
+        pushUndo(s, nowMs);
         s.clock.mode = 'game'; s.clock.running = false; s.clock.since = null;
         s.clock.remainingMs = s.clock.gameRemainingMs;
         return { state: s };
       }
-      pushUndo(s);
+      pushUndo(s, nowMs);
       if (s.clock.mode === 'timeout') {
         s.clock.mode = 'game'; s.clock.timeoutTeam = null;
         s.clock.remainingMs = s.clock.gameRemainingMs;
@@ -309,7 +330,7 @@ function runAction(s, action, nowIso, nowMs) {
       return { state: s };
     }
     case 'finish': {
-      pushUndo(s);
+      pushUndo(s, nowMs);
       s.status = 'finished';
       s.finishedAt = iso(nowIso);
       s.winner = s.teams[0].score === s.teams[1].score ? null : (s.teams[0].score > s.teams[1].score ? 0 : 1);
