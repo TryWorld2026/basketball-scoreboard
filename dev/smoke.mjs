@@ -72,11 +72,17 @@ row.state.clock.remainingMs = -10;
 r = await apply(code, row.version, { type: 'clock_zero' }); version = r.json.version;
 check('归零后进入节间', r.json.state.clock.mode === 'break' && r.json.state.clock.period === 2, JSON.stringify(r.json?.state?.clock));
 check('新一节犯规清零', r.json.state.teams[1].fouls === 0);
+check('foulsTotal 全场累计，不随节清零', r.json.state.teams[1].foulsTotal === 5, `实际 ${r.json.state.teams[1].foulsTotal}`);
 // 节间归零 → 回比赛模式
 const row2 = store._rows.get(code);
 row2.state.clock.remainingMs = -10;
 r = await apply(code, row2.version, { type: 'clock_zero' }); version = r.json.version;
 check('节间结束回比赛计时', r.json.state.clock.mode === 'game' && r.json.state.clock.running === false);
+// 撤销要把累计数一起回退（snapshot 整队克隆，漏了就是数据卡数字对不上）
+r = await apply(code, version, { type: 'foul', team: 1 }); version = r.json.version;
+r = await apply(code, version, { type: 'undo' }); version = r.json.version;
+check('撤销回退 foulsTotal', r.json.state.teams[1].foulsTotal === 5 && r.json.state.teams[1].fouls === 0,
+  `fouls ${r.json.state.teams[1].fouls} total ${r.json.state.teams[1].foulsTotal}`);
 
 console.log('— 末节平局自动加时 —');
 const row3 = store._rows.get(code);

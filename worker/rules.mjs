@@ -72,7 +72,7 @@ export function emptyState(config, teams, players) {
     status: 'setup',
     config,
     teams: teams.map((t) => ({
-      ...t, score: 0, fouls: 0, timeoutsLeft: config.timeouts,
+      ...t, score: 0, fouls: 0, foulsTotal: 0, timeoutsLeft: config.timeouts,
       periodScores: new Array(config.periods).fill(0),
       stats: { pts3: 0, pts2: 0, pts1: 0 },
     })),
@@ -249,6 +249,7 @@ function runAction(s, action, nowIso, nowMs) {
       activate(s, nowIso);
       pushUndo(s, nowMs);
       s.teams[team].fouls += 1;
+      s.teams[team].foulsTotal += 1; // fouls 每节清零，foulsTotal 全场累计，赛后数据卡用它
       return { state: s };
     }
     case 'timeout': {

@@ -200,6 +200,14 @@ const mutants = [
     to: `    ;`,
     suite: 'parity', mustRedOn: '第 2 节平分（平局才加时）',
   },
+  {
+    name: 'M25 全场累计犯规不再累计（赛后数据卡的犯规数只剩末节）',
+    file: RULES,
+    from: `      s.teams[team].fouls += 1;
+      s.teams[team].foulsTotal += 1; // fouls 每节清零，foulsTotal 全场累计，赛后数据卡用它`,
+    to: `      s.teams[team].fouls += 1;`,
+    suite: 'smoke', mustRedOn: 'foulsTotal 全场累计，不随节清零',
+  },
 ];
 
 const runSuite = (which) => {
