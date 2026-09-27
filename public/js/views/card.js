@@ -231,6 +231,39 @@ export default {
     const store = new GameStore(code);
     const canvas = h('canvas', { class: 'card-canvas', width: W, height: H, 'aria-label': '比赛数据卡' });
     const body = h('div');
+    const fileName = (s) => `数据卡-${s.teams[0].name}vs${s.teams[1].name}.png`;
+
+    // iOS Safari 至今不认 <a download>（WebKit bug 167341 仍是 OPEN），
+    // 在 iPhone 上点「保存图片」只会打开一张图、要长按才能存，体验是断的。
+    // 那边必须走 navigator.share({ files })，系统分享面板里的「存储图像」直接进相册。
+    // 而 WebKit 的 share() 要求同步发生在用户手势里——UserGesture 不会传进 toBlob 回调，
+    // 所以 File 必须提前备好，点击时才能同步 share。
+    let shareFile = null;
+    let shareSig = '';
+    const sigOf = (s) => [
+      s.status, s.finishedAt || '',
+      s.teams[0].name, s.teams[1].name, s.teams[0].score, s.teams[1].score,
+      s.teams[0].foulsTotal ?? s.teams[0].fouls, s.teams[1].foulsTotal ?? s.teams[1].fouls,
+      s.players.map((p) => p.points).join(','),
+    ].join('|');
+    const canShareFiles = (f) => {
+      try { return !!(navigator.canShare && navigator.share && navigator.canShare({ files: [f] })); }
+      catch { return false; }
+    };
+    // 画完就顺手编码一份备用；状态变了才重编，别每次轮询都压一张 150KB 的 PNG
+    const prepShare = (s) => {
+      const sig = sigOf(s);
+      if (sig === shareSig) return;
+      shareSig = sig;
+      shareFile = null;
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        try {
+          shareFile = new File([blob], fileName(s), { type: 'image/png' });
+        } catch { shareFile = null; } // 老浏览器没有 File 构造器，退回 <a download>
+      }, 'image/png');
+    };
+
     // 按钮先禁用：画布没画出来之前点保存，存出去的是一张空白图
     // （线上实测过：状态未回来时 toBlob 立刻执行，文件名还会变成 undefinedvsundefined）
     const saveBtn = h('button', {
@@ -238,13 +271,27 @@ export default {
       onclick: (e) => {
         const s = store.state;
         if (!s) return;
-        canvas.toBlob((blob) => {
-          if (!blob) { e.target.textContent = '保存失败，请截图保存'; return; }
+        // 1) iPhone / Android：系统分享面板，「存储图像」进相册
+        if (shareFile && canShareFiles(shareFile)) {
+          navigator.share({
+            files: [shareFile],
+            title: '赛后数据卡',
+            text: `${s.teams[0].name} ${s.teams[0].score} : ${s.teams[1].score} ${s.teams[1].name}`,
+          }).catch(() => { /* 用户取消分享，不算错误 */ });
+          return;
+        }
+        // 2) 桌面：<a download> 直接落盘
+        const done = (blob) => {
           const a = document.createElement('a');
           a.href = URL.createObjectURL(blob);
-          a.download = `数据卡-${s.teams[0].name}vs${s.teams[1].name}.png`;
+          a.download = fileName(s);
           a.click();
           setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+        };
+        if (shareFile) { done(shareFile); return; } // 已备好的 File 本身就是 Blob
+        canvas.toBlob((blob) => {
+          if (!blob) { e.target.textContent = '保存失败，请截图保存'; return; }
+          done(blob);
         }, 'image/png');
       },
     }, '保存图片');
@@ -284,6 +331,7 @@ export default {
         code,
         dateLabel: new Date(s.finishedAt || s.startedAt || Date.now()).toLocaleDateString('zh-CN'),
       });
+      prepShare(s);
     };
     const un = store.subscribe(render);
     store.start(3000);

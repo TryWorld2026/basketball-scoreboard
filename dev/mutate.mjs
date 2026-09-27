@@ -10,6 +10,8 @@ const HANDLER = R('../worker/handler.mjs');
 const FAKESTORE = R('../dev/fake-store.mjs');
 const STOREJS = R('../public/js/store.js');
 const CLOCKJS = R('../public/js/clock.js');
+const CSSFILE = R('../public/styles.css');
+const CARDJS = R('../public/js/views/card.js');
 
 const mutants = [
   {
@@ -207,6 +209,31 @@ const mutants = [
       s.teams[team].foulsTotal += 1; // fouls 每节清零，foulsTotal 全场累计，赛后数据卡用它`,
     to: `      s.teams[team].fouls += 1;`,
     suite: 'smoke', mustRedOn: 'foulsTotal 全场累计，不随节清零',
+  },
+  // ---------- 移动端：这些问题是自动化跑不出来的（CI 里没有 iPhone），
+  // 只有把「修好的样子」写成断言 + 变异体，才不会在下次改版里悄悄退回去。
+  {
+    name: 'M26 球员得分按钮 .chip 退回行内尺寸（手机上 35px 命中区，全场最高频的操作）',
+    file: CSSFILE,
+    from: `min-height: 44px; padding: .5rem .85rem; border-radius: 999px;`,
+    to: `padding: .5rem .85rem; border-radius: 999px;`,
+    suite: 'mobile', mustRedOn: '球员得分按钮 .chip 命中区不小于 44px',
+  },
+  {
+    name: 'M27 iOS 保存图片不再走分享面板（iPhone 退化成长按存图，且被注释骗过断言）',
+    file: CARDJS,
+    from: `navigator.share({
+            files: [shareFile],`,
+    to: `void({
+            files: [shareFile],`,
+    suite: 'mobile', mustRedOn: '保存走 navigator.share',
+  },
+  {
+    name: 'M28 .d-overlay 的 color-mix 兜底被删（老 iOS 弹层整块变透明，不是退化而是消失）',
+    file: CSSFILE,
+    from: `  background: rgba(6, 9, 18, .96);`,
+    to: `  /* MUTANT: 遮罩兜底删除 */`,
+    suite: 'mobile', mustRedOn: 'color-mix 一律要有无 color-mix 的兜底声明',
   },
 ];
 

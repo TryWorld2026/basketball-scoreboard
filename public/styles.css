@@ -24,6 +24,9 @@ body {
   font-family: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
   -webkit-font-smoothing: antialiased;
   min-height: 100dvh;
+  /* 手机上连点 +1/+2/+3 时，双击缩放会把页面突然放大，很打断节奏。
+     关掉双击缩放，但保留双指捏合（无障碍需要）。 */
+  touch-action: manipulation;
 }
 a { color: inherit; text-decoration: none; }
 button { font: inherit; color: inherit; cursor: pointer; }
@@ -56,9 +59,12 @@ h1, h2, h3, h4 { margin: 0; font-weight: 800; }
 
 /* ---------- 通用控件 ---------- */
 .btn-row { display: flex; gap: .6rem; flex-wrap: wrap; justify-content: center; margin-top: 1rem; }
+/* 所有按钮的命中区下限。原来只有 .big/.small 撑了高度，
+   普通 .ghost 光靠 padding 只有 ~43.6px，手机上差一点就点空。 */
 .primary, .ghost, .danger {
   border-radius: 14px; padding: .7rem 1.2rem; border: 1px solid transparent;
   font-weight: 700; transition: transform .08s ease, filter .15s ease;
+  min-height: 44px; display: inline-flex; align-items: center; justify-content: center;
 }
 .primary { background: var(--ink); color: #0A0E1A; }
 .primary:hover { filter: brightness(1.08); }
@@ -67,28 +73,42 @@ h1, h2, h3, h4 { margin: 0; font-weight: 800; }
 .ghost:hover { border-color: var(--muted); }
 .danger { background: rgba(225, 29, 46, .12); border-color: rgba(225, 29, 46, .5); color: #FFB4BB; }
 .big { min-height: 56px; font-size: 1.05rem; }
-.small { min-height: 40px; padding: .45rem .8rem; font-size: .9rem; border-radius: 10px; }
-.icon-btn { background: none; border: none; color: var(--muted); font-size: 1.2rem; padding: 0 .5rem; }
+/* 44px 是苹果 HIG 的触控目标下限（也是安卓 48dp 的等效值）。
+   比赛时记分员是盯着球场盲点的，按钮矮一截就会点错人/漏点。 */
+.small { min-height: 44px; padding: .45rem .8rem; font-size: .9rem; border-radius: 10px; }
+.icon-btn { background: none; border: none; color: var(--muted); font-size: 1.2rem; padding: 0 .5rem; min-height: 44px; }
 button:disabled { opacity: .45; cursor: not-allowed; }
 
 .inp {
   background: var(--panel2); border: 1px solid var(--line); color: var(--ink);
   border-radius: 12px; padding: .75rem .85rem; font-size: 1rem; width: 100%;
+  min-height: 44px; /* 手机上 select 只有 43px，差 1px 点不中 */
 }
 .inp:focus { outline: 2px solid #4F74FF; outline-offset: 1px; }
 .inp.num { max-width: 90px; }
 select.inp { appearance: none; }
 
-.check { display: flex; align-items: center; gap: .55rem; margin: .8rem 0; color: var(--muted); font-size: .95rem; }
-.check input { width: 20px; height: 20px; accent-color: #4F74FF; }
+/* 整行都是命中区：原来只有 26px 高，手指得精确压在字上 */
+.check { display: flex; align-items: center; gap: .55rem; margin: .3rem 0; min-height: 44px; color: var(--muted); font-size: .95rem; cursor: pointer; }
+.check input { width: 20px; height: 20px; accent-color: #4F74FF; flex: none; }
 
 .field { display: block; margin: .5rem 0; }
 .field > span { display: block; font-size: .85rem; color: var(--muted); margin-bottom: .3rem; }
 .row { display: flex; gap: .5rem; }
 
 .swatches { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .5rem; }
-.swatch { width: 30px; height: 30px; border-radius: 50%; border: 2px solid transparent; background: var(--sw); padding: 0; }
-.swatch.sel { border-color: var(--ink); box-shadow: 0 0 0 3px rgba(232, 237, 247, .18); }
+/* 命中区 44x44，视觉圆点仍是 30px：按钮自身透明，圆点画在 ::before 里。
+   （试过用 ::after 外扩命中区，Chromium 的伪元素命中不可靠，elementsFromPoint 里根本没有这个按钮） */
+.swatch {
+  position: relative; width: 44px; height: 44px;
+  border: none; background: transparent; padding: 0;
+  /* 不要在这里加 border-radius:50%——那会把命中区削成圆形，白白丢掉四角 */
+}
+.swatch::before {
+  content: ""; position: absolute; inset: 7px;
+  border-radius: 50%; background: var(--sw); border: 2px solid transparent;
+}
+.swatch.sel::before { border-color: var(--ink); box-shadow: 0 0 0 3px rgba(232, 237, 247, .18); }
 
 .form-error { color: #FF8FA0; font-size: .92rem; margin: .8rem 0 0; }
 .big-err { font-size: 1.2rem; color: #FF8FA0; }
@@ -98,7 +118,8 @@ select.inp { appearance: none; }
 .brand h1 { font-size: 1.25rem; letter-spacing: .02em; }
 .brand .tag { font-size: .78rem; color: var(--amber); border: 1px solid rgba(245, 158, 11, .4); border-radius: 999px; padding: .15rem .55rem; }
 .brand-led { font-size: 1.4rem; }
-.back { color: var(--muted); font-size: .95rem; }
+/* 返回链接原来只有 17px 高，手机上根本点不中；撑到 44px 命中区，用负 margin 补回视觉位置 */
+.back { color: var(--muted); font-size: .95rem; min-height: 44px; display: inline-flex; align-items: center; padding: 0 .35rem; margin-left: -.35rem; }
 .back:hover { color: var(--ink); }
 
 .home { max-width: 980px; margin: 0 auto; padding: 1.2rem; display: grid; gap: 1.2rem; grid-template-columns: 1.6fr 1fr; align-items: start; }
@@ -118,7 +139,7 @@ select.inp { appearance: none; }
 .qr svg { display: block; width: 180px; height: 180px; }
 .team-line { font-size: 1.1rem; font-weight: 700; margin: .6rem 0; }
 .team-line span { color: var(--tc); }
-.status-link { display: inline-block; margin-top: 1rem; color: var(--amber); font-weight: 700; }
+.status-link { display: inline-flex; align-items: center; min-height: 44px; margin-top: .4rem; color: var(--amber); font-weight: 700; }
 
 /* ---------- 控制端 ---------- */
 .ctrl-head { position: sticky; top: 0; z-index: 3; background: linear-gradient(var(--bg) 85%, transparent); padding: .7rem .9rem .3rem; padding-top: calc(.7rem + env(safe-area-inset-top)); }
@@ -135,7 +156,7 @@ select.inp { appearance: none; }
 .clock-strip { display: flex; flex-direction: column; gap: .45rem; padding: .5rem 0; }
 .clock-line { display: flex; align-items: center; gap: .7rem; }
 .clock-sub { display: flex; gap: .5rem; justify-content: flex-end; }
-.clock-sub .ghost.small { min-height: 36px; padding: .35rem .7rem; font-size: .85rem; }
+.clock-sub .ghost.small { min-height: 44px; padding: .35rem .7rem; font-size: .85rem; }
 .period-tag { font-weight: 800; color: var(--amber); min-width: 3.2rem; }
 .led-clock { font-size: 2.4rem; margin-inline: auto; }
 .led-shot { font-size: 1.5rem; --led-on: #FFD08A; --led-glow: rgba(245, 158, 11, .55); }
@@ -147,8 +168,11 @@ select.inp { appearance: none; }
 .ctrl-teams { display: flex; flex-direction: column; gap: .7rem; padding: .6rem .9rem 0; }
 .team-panel {
   --tc: #fff;
+  /* color-mix 要 iOS 16.2+；老系统整条声明会被丢掉，所以先给一份能看的纯色兜底 */
+  background: var(--panel);
   background: linear-gradient(180deg, color-mix(in srgb, var(--tc) 16%, var(--panel)) 0%, var(--panel) 72%);
-  border: 1px solid color-mix(in srgb, var(--tc) 42%, var(--line));
+  border: 1px solid var(--line);
+  border-color: color-mix(in srgb, var(--tc) 42%, var(--line));
   border-left: 6px solid var(--tc);
   border-radius: 18px; padding: .8rem .9rem;
 }
@@ -156,7 +180,13 @@ select.inp { appearance: none; }
 .tp-head h3 { font-size: 1.05rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .led-score { font-size: 2.3rem; --led-on: #FFFFFF; --led-glow: rgba(255, 255, 255, .35); }
 .chips { display: flex; flex-wrap: wrap; gap: .4rem; margin: .55rem 0 .2rem; }
-.chip { padding: .5rem .8rem; border-radius: 999px; border: 1px solid var(--line); background: var(--panel2); color: var(--muted); font-size: .9rem; font-weight: 700; }
+/* 球员得分按钮：整场比赛被点得最多的元素，必须够大够好点 */
+.chip {
+  min-height: 44px; padding: .5rem .85rem; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--panel2); color: var(--muted);
+  font-size: .9rem; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+}
 .chip.sel { background: var(--tc); border-color: var(--tc); color: #fff; }
 .score-btns { display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem; margin-top: .55rem; }
 .btn-score {
@@ -164,7 +194,12 @@ select.inp { appearance: none; }
   background: var(--panel2); border: 1px solid var(--line); border-radius: 16px;
   transition: transform .06s ease, background .12s ease;
 }
-.btn-score:active { transform: scale(.96); background: color-mix(in srgb, var(--tc) 34%, var(--panel2)); border-color: var(--tc); }
+.btn-score:active {
+  transform: scale(.96);
+  background: var(--panel2);
+  background: color-mix(in srgb, var(--tc) 34%, var(--panel2));
+  border-color: var(--tc);
+}
 .tp-foot { display: flex; align-items: center; gap: .5rem; margin-top: .6rem; }
 .tp-foot .mini { color: var(--muted); font-size: .85rem; font-weight: 700; }
 .tp-foot .mini:first-child { margin-right: auto; }
@@ -186,9 +221,19 @@ select.inp { appearance: none; }
 }
 .display::before {
   content: ""; position: absolute; inset: 0; pointer-events: none;
+  /* 兜底：纯队色 + 低透明度，老 iOS 上也能看出两队主色 */
   background:
-    linear-gradient(115deg, color-mix(in srgb, var(--tc0) 22%, transparent) 0%, transparent 42%),
-    linear-gradient(-65deg, color-mix(in srgb, var(--tc1) 22%, transparent) 0%, transparent 42%);
+    linear-gradient(115deg, var(--tc0) 0%, transparent 42%),
+    linear-gradient(-65deg, var(--tc1) 0%, transparent 42%);
+  opacity: .16;
+}
+@supports (background: color-mix(in srgb, red 50%, blue)) {
+  .display::before {
+    background:
+      linear-gradient(115deg, color-mix(in srgb, var(--tc0) 22%, transparent) 0%, transparent 42%),
+      linear-gradient(-65deg, color-mix(in srgb, var(--tc1) 22%, transparent) 0%, transparent 42%);
+    opacity: 1;
+  }
 }
 .display.flash::after { content: ""; position: absolute; inset: 0; background: rgba(225, 29, 46, .32); animation: flash .7s ease-out forwards; pointer-events: none; }
 @keyframes flash { 0%, 40% { opacity: 1; } 20%, 60% { opacity: .2; } 100% { opacity: 0; } }
@@ -205,6 +250,8 @@ select.inp { appearance: none; }
 
 .d-mid { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 1.2vw; }
 .d-team {
+  /* 兜底渐变不含 color-mix，老 iOS 也能画出队色（不被压暗而已） */
+  background: linear-gradient(180deg, var(--tc) 0%, #05070D 100%);
   background: linear-gradient(180deg, color-mix(in srgb, var(--tc) 55%, #000) 0%, color-mix(in srgb, var(--tc) 22%, #05070D) 100%);
   padding: 2.5vh 1.6vw; display: flex; flex-direction: column; gap: 1.2vh; min-height: 30vh;
 }
@@ -226,7 +273,10 @@ select.inp { appearance: none; }
 .d-overlay {
   position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 3vh;
+  /* 兜底必须在 color-mix 前面：老 iOS 丢掉整条声明时，终局字幕不能变成全透明 */
+  background: rgba(6, 9, 18, .96);
   background: color-mix(in srgb, var(--tc, #0A0E1A) 16%, rgba(6, 9, 18, .96));
+  -webkit-backdrop-filter: blur(6px); /* iOS Safari 18 以下只认带前缀的 */
   backdrop-filter: blur(6px);
 }
 .d-overlay[hidden] { display: none; }
