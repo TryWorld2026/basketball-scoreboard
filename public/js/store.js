@@ -66,6 +66,9 @@ export class GameStore {
   }
 
   _accept(snap) {
+    // 乱序保护：轮询 GET 可能比刚发出的 apply 响应更晚到达。
+    // 版本号是权威序号，旧响应直接丢弃，避免快照/版本回退造成瞬态闪回。
+    if (this.snapshot && Number.isInteger(snap?.version) && snap.version < this.version) return;
     this.snapshot = snap;
     this.offsetMs = Date.parse(snap.serverTime) - Date.now();
     this.lastOkAt = this.now();

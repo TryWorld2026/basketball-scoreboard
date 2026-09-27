@@ -27,6 +27,7 @@ const MESSAGES = {
   service_error: '服务异常，请稍后重试',
   code_exhausted: '创建失败，请重试',
   network: '网络连接失败',
+  too_many_requests: '操作太频繁了，休息一下再来',
 };
 
 export class ApiError extends Error {
