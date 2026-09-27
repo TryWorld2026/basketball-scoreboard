@@ -50,5 +50,13 @@ export function createD1Store(db) {
     async deleteStaleSetup(beforeIso) {
       await db.prepare('DELETE FROM games WHERE status = ? AND created_at < ?').bind('setup', beforeIso).run();
     },
+
+    // 半途放弃的局：建过赛、打过几下，但超过 N 天没有任何写入（updated_at 不动）。
+    // 已 finished 的永久保留（数据卡链接要能长期打开），setup 归 deleteStaleSetup 管。
+    async deleteAbandoned(beforeIso) {
+      await db.prepare(
+        "DELETE FROM games WHERE status IN ('live', 'break', 'timeout') AND updated_at < ?",
+      ).bind(beforeIso).run();
+    },
   };
 }
