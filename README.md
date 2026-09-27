@@ -2,7 +2,9 @@
 
 > 校园班赛的官方记分牌：手机当遥控器，任何一块屏幕当大屏，打完自动出一张能甩进班群的数据卡。
 
-**在线使用**：https://basketball-scoreboard.1822520752.workers.dev （无需注册，打开即是建赛页）
+**在线使用**：https://score.tryworld.com.cn （无需注册，打开即是建赛页）
+
+> `*.workers.dev` 子域在国内网络下会被 DNS 污染、间歇性不可达，所以线上走自定义域名 `score.tryworld.com.cn`（Cloudflare zone 权威 DNS）。原始的 workers.dev 地址仍可用：https://basketball-scoreboard.1822520752.workers.dev
 
 ![license](https://img.shields.io/badge/license-MIT-green) ![runtime](https://img.shields.io/badge/Cloudflare-Workers%20%2B%20D1-orange) ![build](https://img.shields.io/badge/build-no%20bundler-lightgrey)
 
