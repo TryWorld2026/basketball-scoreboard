@@ -17,6 +17,17 @@ export function deriveShot(state, nowMs) {
   return { running: state.shot.running, remainingMs, zero: state.shot.running && remainingMs <= 0 };
 }
 
+// 「下一节」这一次点击会不会直接终局：非休息状态下跳到 endPeriod，
+// 而末节（含加时）已分胜负时服务端会落 finished——比分当场锁定。
+// 控制端据此弹二次确认（与「结束比赛」同一级别），休息中按下一节只是提前结束休息，无需问。
+// 判定必须与服务端 applyAction 的真实结果一致，dev/parity.mjs 用落库结果反锁这份实现。
+export function periodNextFinishes(s) {
+  return s.status !== 'finished'
+    && s.clock.mode !== 'break'
+    && s.clock.period >= s.config.periods
+    && s.teams[0].score !== s.teams[1].score;
+}
+
 export function formatClock(ms, tenths = false) {
   const total = Math.max(0, ms);
   const m = Math.floor(total / 60000);

@@ -1,6 +1,6 @@
 // 控制端：记分员的手机遥控器。大按钮、单手拇指区、断网排队、WakeLock。
 import { GameStore } from '../store.js';
-import { formatClock } from '../clock.js';
+import { formatClock, periodNextFinishes } from '../clock.js';
 import { Led } from '../led.js';
 import { sounds, primeAudio } from '../audio.js';
 import { navigate } from '../router.js';
@@ -179,7 +179,16 @@ export default {
                 await send({ type: 'reset' });
               } }, '重开一场'))
             : h('div', { class: 'btn-row' },
-              h('button', { class: 'ghost', type: 'button', onclick: () => send({ type: 'period_next' }) }, '下一节 ▶'),
+              h('button', { class: 'ghost', type: 'button', onclick: () => {
+                const s = store.state;
+                // 末节已分胜负时「下一节」会直接终局并锁定比分（finished 后改分一律被拒），
+                // 和「结束比赛」一样必须先问一句——演示时连点「下一节」曾把整场比赛打没。
+                if (s && periodNextFinishes(s)) {
+                  const [a, b] = [s.teams[0], s.teams[1]];
+                  if (!confirm(`继续「下一节」将直接结束比赛（${a.score}:${b.score}）并锁定比分。确定结束？`)) return;
+                }
+                send({ type: 'period_next' });
+              } }, '下一节 ▶'),
               h('button', { class: 'danger', type: 'button', onclick: async () => {
                 if (!confirm('确认结束比赛？结束后比分锁定，数据卡自动生成。')) return;
                 await send({ type: 'finish' });
