@@ -70,7 +70,11 @@ export default {
       scoreB.setText(String(s.teams[1].score));
       const tenths = d.mode === 'game' && d.remainingMs < 60000 && !finished;
       clockLed.setText(finished ? formatClock(s.clock.remainingMs) : formatClock(d.remainingMs, tenths), { colonBlink: d.running });
-      if (s.config.shotClock) shotLed.setText(String(Math.ceil((store.shot()?.remainingMs ?? 0) / 1000)).padStart(2, '0'));
+      if (s.config.shotClock) {
+        const sh = store.shot();
+        shotLed.setText(String(Math.ceil((sh?.remainingMs ?? 0) / 1000)).padStart(2, '0'));
+        shotLed.el.classList.toggle('zero', !!sh?.zero);
+      }
 
       periodEl.textContent = finished ? 'FINAL'
         : d.mode === 'timeout' ? `暂停 · ${s.teams[s.clock.timeoutTeam ?? s.possession].name}`

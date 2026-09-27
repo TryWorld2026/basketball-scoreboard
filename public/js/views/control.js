@@ -14,6 +14,7 @@ export default {
     const sel = { 0: null, 1: null };
     let undoLock = false;
     let zeroHandled = false;
+    let shotZeroHandled = false;
     let lastFinished = null;
     let wakeLock = null;
 
@@ -25,8 +26,17 @@ export default {
     const shotLed = new Led({ className: 'led-shot', label: '进攻时限' });
     const possArrow = h('span', { class: 'poss' });
     const startBtn = h('button', { class: 'primary clock-btn', type: 'button' }, '▶ 开始');
+    const possBtn = h('button', {
+      class: 'ghost small', type: 'button', 'aria-label': '交换球权',
+      onclick: () => { const s = store.state; if (s) send({ type: 'possession', team: 1 - s.possession }); },
+    }, '⇄ 交换球权');
+    const shotResetBtn = h('button', {
+      class: 'ghost small', type: 'button', 'aria-label': '重置 24 秒进攻时限', hidden: true,
+      onclick: () => send({ type: 'shot_reset' }),
+    }, '↻ 24秒');
     const clockArea = h('div', { class: 'clock-strip' },
       h('div', { class: 'clock-line' }, periodTag, clockLed.el, shotLed.el, possArrow),
+      h('div', { class: 'clock-sub' }, possBtn, shotResetBtn),
       startBtn);
     const teamsBox = h('div', { class: 'ctrl-teams' });
     const footer = h('div', { class: 'ctrl-foot' });
@@ -148,6 +158,11 @@ export default {
           h('a', { href: '/', 'data-link': true, class: 'primary big' }, '回首页')));
         return;
       }
+      // 断网期间排队的动作，恢复后遇到业务错误（如比赛已结束）会被服务端丢弃——必须让记分员知道
+      if (store.lastBusinessError) {
+        showToast(store.lastBusinessError.message);
+        store.lastBusinessError = null;
+      }
       const s = store.state;
       if (!s) return;
       if (!built || sigOf(s) !== built.sig) buildTeams(s);
@@ -166,7 +181,11 @@ export default {
       startBtn.disabled = finished;
       possArrow.textContent = s.possession === 0 ? `◀ ${s.teams[0].name}` : `${s.teams[1].name} ▶`;
       shotLed.el.hidden = !s.config.shotClock;
-      undoBtn.disabled = undoLock || !s.undo;
+      possBtn.disabled = finished;
+      shotResetBtn.hidden = !s.config.shotClock || finished;
+      shotResetBtn.disabled = finished;
+      // 结束后撤销无意义（finish 不改数据，撤销只会烧掉 undo 点），直接禁用
+      undoBtn.disabled = undoLock || !s.undo || finished;
 
       if (finished !== lastFinished) {
         lastFinished = finished;
@@ -204,7 +223,19 @@ export default {
       const tenths = d.mode === 'game' && d.remainingMs < 60000;
       clockLed.setText(formatClock(d.remainingMs, tenths), { colonBlink: d.running });
       const sh = store.shot();
-      if (sh) shotLed.setText(String(Math.ceil(sh.remainingMs / 1000)).padStart(2, '0'));
+      if (sh) {
+        shotLed.setText(String(Math.ceil(sh.remainingMs / 1000)).padStart(2, '0'));
+        shotLed.el.classList.toggle('zero', sh.zero);
+        // 24 秒违例：蜂鸣 + 自动归满（比赛时钟在跑就继续走）。与比赛时钟归零同一套“不等确认”哲学
+        if (sh.zero && !shotZeroHandled) {
+          shotZeroHandled = true;
+          sounds.buzzer();
+          navigator.vibrate?.([40, 40, 40]);
+          showToast('24 秒到 · 已自动重置，记得交换球权');
+          store.apply({ type: 'shot_reset' });
+        }
+        if (!sh.zero) shotZeroHandled = false;
+      }
       if (d.zero && !zeroHandled) {
         zeroHandled = true;
         sounds.buzzer();
@@ -242,7 +273,9 @@ export default {
       const hit = map[e.key.toLowerCase()];
       if (hit) { e.preventDefault(); score(hit[0], hit[1]); return; }
       if (e.key === ' ') { e.preventDefault(); startBtn.click(); return; }
-      if (e.key.toLowerCase() === 'z') { e.preventDefault(); undoBtn.click(); }
+      if (e.key.toLowerCase() === 'z') { e.preventDefault(); undoBtn.click(); return; }
+      if (e.key.toLowerCase() === 'r' && !shotResetBtn.hidden) { e.preventDefault(); shotResetBtn.click(); return; }
+      if (e.key.toLowerCase() === 'p' && !possBtn.disabled) { e.preventDefault(); possBtn.click(); return; }
     };
     window.addEventListener('keydown', onKey);
 

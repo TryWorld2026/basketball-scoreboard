@@ -134,9 +134,13 @@ select.inp { appearance: none; }
 
 .clock-strip { display: flex; flex-direction: column; gap: .45rem; padding: .5rem 0; }
 .clock-line { display: flex; align-items: center; gap: .7rem; }
+.clock-sub { display: flex; gap: .5rem; justify-content: flex-end; }
+.clock-sub .ghost.small { min-height: 36px; padding: .35rem .7rem; font-size: .85rem; }
 .period-tag { font-weight: 800; color: var(--amber); min-width: 3.2rem; }
 .led-clock { font-size: 2.4rem; margin-inline: auto; }
 .led-shot { font-size: 1.5rem; --led-on: #FFD08A; --led-glow: rgba(245, 158, 11, .55); }
+/* 24 秒归零：与 BONUS 同一套“红色 = 需要立刻处理”的状态色语义 */
+.led-shot.zero, .led-shot-big.zero { --led-on: #FF6B7A; --led-glow: rgba(225, 29, 46, .65); animation: pulse .6s infinite; }
 .poss { font-size: .8rem; color: var(--muted); font-weight: 700; text-align: right; min-width: 5.5rem; }
 .clock-btn { width: 100%; min-height: 52px; font-size: 1.05rem; }
 
