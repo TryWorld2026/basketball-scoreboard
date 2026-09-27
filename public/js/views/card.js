@@ -230,35 +230,56 @@ export default {
     const code = rawCode.toUpperCase();
     const store = new GameStore(code);
     const canvas = h('canvas', { class: 'card-canvas', width: W, height: H, 'aria-label': '比赛数据卡' });
-    const wrap = h('div', { class: 'card-wrap' },
-      h('header', { class: 'brand' }, h('a', { href: `/room/${code}`, 'data-link': true, class: 'back' }, '← 房间'), h('h1', null, '赛后数据卡')),
-      canvas,
-      h('div', { class: 'btn-row' },
-        h('button', {
-          class: 'primary big', type: 'button', onclick: (e) => {
-            canvas.toBlob((blob) => {
-              if (!blob) { e.target.textContent = '保存失败，请截图保存'; return; }
-              const a = document.createElement('a');
-              a.href = URL.createObjectURL(blob);
-              const s = store.state;
-              a.download = `数据卡-${s?.teams[0].name}vs${s?.teams[1].name}.png`;
-              a.click();
-              setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-            }, 'image/png');
-          },
-        }, '保存图片'),
-        h('button', {
-          class: 'ghost big', type: 'button',
-          onclick: async (e) => {
-            try { await navigator.clipboard.writeText(location.href); e.target.textContent = '已复制 ✓'; }
-            catch { e.target.textContent = '复制失败'; }
-          },
-        }, '复制链接')));
-    root.append(wrap);
+    const body = h('div');
+    // 按钮先禁用：画布没画出来之前点保存，存出去的是一张空白图
+    // （线上实测过：状态未回来时 toBlob 立刻执行，文件名还会变成 undefinedvsundefined）
+    const saveBtn = h('button', {
+      class: 'primary big', type: 'button', disabled: true,
+      onclick: (e) => {
+        const s = store.state;
+        if (!s) return;
+        canvas.toBlob((blob) => {
+          if (!blob) { e.target.textContent = '保存失败，请截图保存'; return; }
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = `数据卡-${s.teams[0].name}vs${s.teams[1].name}.png`;
+          a.click();
+          setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+        }, 'image/png');
+      },
+    }, '保存图片');
+    const copyBtn = h('button', {
+      class: 'ghost big', type: 'button', disabled: true,
+      onclick: async (e) => {
+        try { await navigator.clipboard.writeText(location.href); e.target.textContent = '已复制 ✓'; }
+        catch { e.target.textContent = '复制失败'; }
+      },
+    }, '复制链接');
+    const panel = h('div', { class: 'card-wrap' }, canvas, h('div', { class: 'btn-row' }, saveBtn, copyBtn));
 
+    root.append(
+      h('header', { class: 'brand' }, h('a', { href: `/room/${code}`, 'data-link': true, class: 'back' }, '← 房间'), h('h1', null, '赛后数据卡')),
+      body);
+
+    let ready = false;
     const render = () => {
+      if (store.fatal) {
+        body.replaceChildren(h('section', { class: 'panel center' },
+          h('p', { class: 'big-err' }, store.fatal.message),
+          h('a', { href: '/', 'data-link': true, class: 'primary big' }, '返回首页')));
+        return;
+      }
       const s = store.state;
-      if (!s) return;
+      if (!s) {
+        body.replaceChildren(h('section', { class: 'panel center' }, h('p', { class: 'muted' }, '加载中…')));
+        return;
+      }
+      if (!ready) {
+        ready = true;
+        body.replaceChildren(panel);
+        saveBtn.disabled = false;
+        copyBtn.disabled = false;
+      }
       drawCard(canvas, s, {
         code,
         dateLabel: new Date(s.finishedAt || s.startedAt || Date.now()).toLocaleDateString('zh-CN'),
