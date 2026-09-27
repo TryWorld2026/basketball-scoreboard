@@ -107,5 +107,18 @@ check('非法分值 400', (await apply(code, version, { type: 'score', team: 0, 
 check('未知路由 404', (await call('GET', 'action=nope')).status === 404);
 check('GET 走写接口 405', (await call('GET', 'action=create')).status === 405);
 
+console.log('— 24 秒与球权 —');
+const c2 = await call('POST', 'action=create', { ...base, config: { ...base.config, shotClock: true } });
+check('开启 24 秒的场次创建成功', c2.status === 200, JSON.stringify(c2.json));
+const code2 = c2.json?.code || '';
+let v2 = c2.json?.version ?? 0;
+r = await apply(code2, v2, { type: 'clock_start' }); v2 = r.json.version;
+check('开球后 24 秒走表', r.json.state.shot.running === true && r.json.state.shot.remainingMs === 24000, JSON.stringify(r.json.state.shot));
+r = await apply(code2, v2, { type: 'score', team: 0, points: 3, playerId: '张伟' }); v2 = r.json.version;
+check('进球后 24 秒归满且继续走', r.json.state.shot.running === true && r.json.state.shot.remainingMs === 24000, JSON.stringify(r.json.state.shot));
+r = await apply(code2, v2, { type: 'possession', team: 1 }); v2 = r.json.version;
+check('交换球权生效', r.json.state.possession === 1);
+check('对象 playerId 被拒', (await apply(code2, v2, { type: 'score', team: 0, points: 2, playerId: { x: 1 } })).json?.error === 'invalid_player');
+
 console.log(`\n通过 ${pass} / 失败 ${fail}`);
 process.exit(fail ? 1 : 0);

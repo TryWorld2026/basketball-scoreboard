@@ -117,7 +117,6 @@ console.log('\n— 协议健壮性（线上同样生效）—');
   ok('未知动作 400', (await apply(code, { type: 'nope' }, 0)).status === 400);
   ok('脏分值被拒', (await apply(code, { type: 'score', team: null, points: 2 }, 0)).json?.error === 'invalid_team');
   ok('GET 走写接口 405', (await call('action=create')).status === 405);
-  ok('无 cache-control 破坏实时性', true);
   const res = await fetch(`${API}?action=get&code=${code}`);
   ok('响应带 no-store', /no-store/.test(res.headers.get('cache-control') || ''), res.headers.get('cache-control'));
 }

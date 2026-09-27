@@ -30,5 +30,11 @@ export function createFakeStore(seed = []) {
         if (row.status === 'setup' && row.created_at < beforeIso) rows.delete(code);
       }
     },
+
+    async deleteAbandoned(beforeIso) {
+      for (const [code, row] of [...rows]) {
+        if (['live', 'break', 'timeout'].includes(row.status) && row.updated_at < beforeIso) rows.delete(code);
+      }
+    },
   };
 }

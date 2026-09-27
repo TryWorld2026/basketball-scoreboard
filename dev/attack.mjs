@@ -1,7 +1,8 @@
 // 对抗式探针 —— 专打 dev/smoke.mjs 从未询问的维度。每个场景独立假库，避免残留状态伪装成缺陷。
 // 运行：node dev/attack.mjs
 import { handleGames } from '../worker/handler.mjs';
-import { applyAction, emptyState, sanitizeConfig, sanitizeTeams } from '../worker/rules.mjs';
+import { applyAction, deriveClock, emptyState, sanitizeConfig, sanitizeTeams } from '../worker/rules.mjs';
+import { createRateLimiter } from '../worker/ratelimit.mjs';
 import { createFakeStore } from './fake-store.mjs';
 
 let pass = 0; let fail = 0; const bugs = [];
@@ -12,13 +13,19 @@ const ok = (name, cond, detail = '') => {
 
 function fresh() {
   const store = createFakeStore();
+  // 每个场景自带限流器：默认限流器是进程级共享的，
+  // 一场攻击跑下来建赛次数会撞上默认上限，把脚手架问题伪装成缺陷。
+  const limiters = {
+    fail: createRateLimiter({ limit: 10_000, windowMs: 60_000 }),
+    create: createRateLimiter({ limit: 10_000, windowMs: 60_000 }),
+  };
   const call = async (method, qs, body) => {
     const req = new Request(`http://s/api/game?${qs}`, {
       method,
       headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
       body: body !== undefined ? (typeof body === 'string' ? body : JSON.stringify(body)) : undefined,
     });
-    const res = await handleGames({ request: req, store });
+    const res = await handleGames({ request: req, store, limiters });
     let json = null; try { json = await res.json(); } catch { /* */ }
     return { status: res.status, json };
   };
@@ -115,10 +122,15 @@ console.log('\n[5] 类型强制：null/字符串/对象混进数字字段');
   ok('points:"2" 字符串应被拒', t2.json?.error === 'invalid_points', `实际 ${JSON.stringify(t2.json)}`);
   const t3 = await apply(code, { type: 'foul', team: 0.5 });
   ok('team:0.5 应被拒', t3.json?.error === 'invalid_team', `实际 ${JSON.stringify(t3.json)}`);
-  const t4 = await apply(code, { type: 'score', team: 0, points: 2, playerId: { toString: () => '张三' } });
-  const s = (await get(code)).json.state;
-  ok('playerId 传对象不应被隐式转成球员名', s.players[0].points === 0 || s.players[0].points === 2,
-    `张伟=${s.players[0].points}（若为 2 说明对象被 String() 吞了）`);
+  // 数组能穿透 JSON 且 String(['张三']) === '张三' —— 这是能真正伪装成球员名的脏数据
+  const t4 = await apply(code, { type: 'score', team: 0, points: 2, playerId: ['张三'] });
+  ok('playerId 传数组应被拒（不被 String() 静默吞成球员名）', t4.json?.error === 'invalid_player', `实际 ${JSON.stringify(t4.json)}`);
+  const t5 = await apply(code, { type: 'score', team: 0, points: 2, playerId: 42 });
+  ok('playerId 传数字应被拒', t5.json?.error === 'invalid_player', `实际 ${JSON.stringify(t5.json)}`);
+  const s4 = (await get(code)).json.state;
+  ok('脏 playerId 不计分', s4.players[0].points === 0, `张三=${s4.players[0].points}`);
+  const t6 = await apply(code, { type: 'score', team: 0, points: 2, playerId: '张三' });
+  ok('合法 playerId 正常计分', !t6.json?.error && (await get(code)).json.state.players[0].points === 2, JSON.stringify(t6.json?.error));
 }
 
 console.log('\n[6] 暂停与犯规的边界');
@@ -287,6 +299,127 @@ console.log('\n[14] 平局结束时 winner 为 null（不误判主队）');
   ok('平局仍标记 finished', g.status === 'finished');
 }
 
+console.log('\n[15] 24 秒进攻时限全行为链（规则层有、UI 有入口、这里锁行为）');
+{
+  const cfg = {
+    periods: 2, periodMinutes: 1, foulLimit: 2, timeouts: 1, trackPlayers: true,
+    breakSeconds: 20, timeoutSeconds: 30, shotClock: true, shotClockSeconds: 24,
+  };
+  const { apply, get, newGame } = fresh();
+  const { code } = await newGame({ config: cfg });
+  const s0 = (await get(code)).json.state;
+  ok('开赛前 24 秒停表且归满', s0.shot.running === false && s0.shot.remainingMs === 24000, JSON.stringify(s0.shot));
+  await apply(code, { type: 'clock_start' });
+  ok('开球后 24 秒开始走', (await get(code)).json.state.shot.running === true);
+  await apply(code, { type: 'score', team: 0, points: 2 });
+  const s1 = (await get(code)).json.state;
+  ok('进球后 24 秒归满且继续走（不冻结）',
+    s1.shot.running === true && s1.shot.remainingMs === 24000 && s1.clock.running === true,
+    JSON.stringify(s1.shot));
+  await apply(code, { type: 'clock_stop' });
+  ok('比赛停表时 24 秒同步停表', (await get(code)).json.state.shot.running === false);
+  await apply(code, { type: 'clock_start' });
+  ok('重新开表 24 秒恢复走动', (await get(code)).json.state.shot.running === true);
+  const rs = await apply(code, { type: 'shot_reset' });
+  ok('手动重置 24 秒生效', !rs.json.error && rs.json.state.shot.remainingMs === 24000, JSON.stringify(rs.json.error));
+  const p = await apply(code, { type: 'possession', team: 1 });
+  ok('手动交换球权生效', !p.json.error && p.json.state.possession === 1, JSON.stringify(p.json.error));
+  ok('非法球队交换球权被拒', (await apply(code, { type: 'possession', team: 2 })).json?.error === 'invalid_team');
+  await apply(code, { type: 'timeout', team: 0 });
+  ok('暂停时 24 秒停表', (await get(code)).json.state.shot.running === false);
+  const b = fresh();
+  const { code: code2 } = await b.newGame();
+  ok('未开启 24 秒时重置被拒', (await b.apply(code2, { type: 'shot_reset' })).json?.error === 'shot_clock_off');
+}
+
+console.log('\n[16] 撤销不吞停表时间（时钟冻结在动作发生那一刻）');
+{
+  const { apply, get, newGame } = fresh();
+  const { code } = await newGame();
+  await apply(code, { type: 'clock_start' });
+  await new Promise((r) => setTimeout(r, 60));
+  await apply(code, { type: 'clock_stop' });
+  const stopped = (await get(code)).json.state.clock.remainingMs;
+  await new Promise((r) => setTimeout(r, 120)); // 停表期间，时钟本不该走
+  const u = await apply(code, { type: 'undo' });
+  const c = u.json.state.clock;
+  ok('撤销停表后时钟冻结在停表那一刻（停表时间不被消耗）',
+    c.running === false && Math.abs(c.remainingMs - stopped) <= 2,
+    `停表值=${stopped} 撤销后=${c.remainingMs}`);
+  ok('撤销后不自动恢复走表（由记分员显式开始）', c.running === false);
+  await apply(code, { type: 'clock_start' });
+  await new Promise((r) => setTimeout(r, 40));
+  const sc = await apply(code, { type: 'score', team: 0, points: 2 });
+  // 时钟在跑时 state 里的 remainingMs 字段并不更新，屏幕上看的是 derive 出来的值
+  const shownAtScore = deriveClock(sc.json.state, Date.parse(sc.json.serverTime)).remainingMs;
+  await new Promise((r) => setTimeout(r, 60));
+  const u2 = await apply(code, { type: 'undo' });
+  ok('撤销进球同样冻结时钟（不吞也不偷跑）',
+    u2.json.state.clock.running === false && Math.abs(u2.json.state.clock.remainingMs - shownAtScore) <= 10,
+    `进球时屏幕值=${shownAtScore} 撤销后=${u2.json.state.clock.remainingMs}`);
+  ok('撤销进球的比分仍回退', (await get(code)).json.state.teams[0].score === 0);
+}
+
+console.log('\n[17] 限流：枚举房间码有成本，正常使用无感');
+{
+  const store = createFakeStore();
+  const limiters = {
+    fail: createRateLimiter({ limit: 3, windowMs: 60_000 }),
+    create: createRateLimiter({ limit: 2, windowMs: 60_000 }),
+  };
+  const call = async (method, qs, body) => {
+    const req = new Request(`http://s/api/game?${qs}`, {
+      method,
+      headers: body ? { 'content-type': 'application/json' } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const res = await handleGames({ request: req, store, limiters });
+    return { status: res.status, json: await res.json(), headers: res.headers };
+  };
+  const teams = [{ name: 'A', color: '#1E4FD8' }, { name: 'B', color: '#E11D2E' }];
+  const miss = () => call('GET', 'action=get&code=ZZZZ');
+  ok('未命中前 3 次正常 404', (await miss()).status === 404 && (await miss()).status === 404 && (await miss()).status === 404);
+  const blocked = await miss();
+  ok('第 4 次未命中被限流 429', blocked.status === 429 && blocked.json.error === 'too_many_requests', JSON.stringify(blocked.json));
+  ok('429 带 retry-after 头', !!blocked.headers?.get?.('retry-after'));
+  const c = await call('POST', 'action=create', { teams, config: {} });
+  ok('命中房间不受失败限流影响', (await call('GET', `action=get&code=${c.json.code}`)).status === 200);
+  await call('POST', 'action=create', { teams, config: {} });
+  const third = await call('POST', 'action=create', { teams, config: {} });
+  ok('建赛限流生效（每小时上限）', third.status === 429 && third.json.error === 'too_many_requests', JSON.stringify(third.json));
+  const ok2 = await call('GET', `action=get&code=${c.json.code}`);
+  ok('限流不影响正常读取', ok2.status === 200);
+}
+
+console.log('\n[18] 半途放弃的局在建赛时被清理（已结束的永久保留）');
+{
+  const store = createFakeStore();
+  const limiters = {
+    fail: createRateLimiter({ limit: 100, windowMs: 60_000 }),
+    create: createRateLimiter({ limit: 100, windowMs: 60_000 }),
+  };
+  const call = async (method, qs, body) => {
+    const req = new Request(`http://s/api/game?${qs}`, {
+      method,
+      headers: body ? { 'content-type': 'application/json' } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const res = await handleGames({ request: req, store, limiters });
+    return { status: res.status, json: await res.json() };
+  };
+  const teams = sanitizeTeams([{ name: 'A', color: '#1E4FD8' }, { name: 'B', color: '#E11D2E' }]);
+  const st = emptyState(sanitizeConfig({ periods: 2 }), teams, []);
+  const old = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
+  store._rows.set('AAAA', { code: 'AAAA', status: 'live', version: 3, state: st, created_at: old, updated_at: old });
+  store._rows.set('BBBB', { code: 'BBBB', status: 'finished', version: 3, state: st, created_at: old, updated_at: old });
+  store._rows.set('CCCC', { code: 'CCCC', status: 'setup', version: 0, state: st, created_at: old, updated_at: old });
+  await call('POST', 'action=create', { teams, config: {} });
+  ok('8 天没写入的 live 房间被清', !store._rows.has('AAAA'));
+  ok('已结束的房间永久保留', store._rows.has('BBBB'));
+  ok('筹建超 24h 的房间照样被清', !store._rows.has('CCCC'));
+}
+
 console.log(`\n探针结果：通过 ${pass} / 攻击命中 ${fail}`);
 if (bugs.length) { console.log('\n命中清单：'); for (const b of bugs) console.log('  - ' + b); }
-process.exit(0);
+// 探针变红必须让 CI 失败——否则这张网只是控制台输出，不构成门禁
+process.exit(fail ? 1 : 0);
