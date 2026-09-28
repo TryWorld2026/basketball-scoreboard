@@ -61,6 +61,10 @@ jobs:
       - name: Install Chromium for Playwright
         run: npx playwright install chromium --with-deps
 
+      # 本地 D1 先建表——否则建赛打过去是 503（local-d1 job 由 test:e2e 负责迁移，这里要自己来）。
+      - name: Apply local D1 migrations
+        run: npx wrangler d1 migrations apply scoreboard-db --local
+
       # 真浏览器跑关键旅程：建赛→找回码区块→记分→大屏同步→数据卡操作记录→补发换锁。
       # 这些是 HTTP 探针和静态断言抓不到的——「false」文本节点就是截图才发现的。
       - name: Real browser journey gate
