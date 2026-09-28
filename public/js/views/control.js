@@ -22,6 +22,10 @@ export default {
     const statusText = h('span', { class: 'status-text' }, '连接中…');
     const undoBtn = h('button', { class: 'ghost small', type: 'button', disabled: true }, '↩ 撤销');
     const periodTag = h('span', { class: 'period-tag' }, 'Q1');
+    // 没有控制凭证时，任何写入都会 403——与其让记分员对着 toast 猜，不如常驻说清怎么救
+    const credBanner = h('div', { class: 'cred-err', role: 'alert', hidden: true },
+      h('p', { class: 'cred-title' }, '此设备没有该比赛的控制凭证'),
+      h('p', { class: 'cred-sub' }, '改比分需要创建比赛的那台手机；或回房间页点「复制控制端链接」在这台设备打开。大屏和数据卡不受影响。'));
     const clockLed = new Led({ className: 'led-clock', label: '比赛时钟' });
     const shotLed = new Led({ className: 'led-shot', label: '进攻时限' });
     const possArrow = h('span', { class: 'poss' });
@@ -48,7 +52,8 @@ export default {
           h('a', { href: `/room/${code}`, 'data-link': true, class: 'back' }, code),
           h('div', { class: 'conn' }, statusDot, statusText),
           undoBtn),
-        clockArea, teamsBox, footer, toast));
+        clockArea, teamsBox, footer, toast),
+      credBanner);
 
     let built = null; // 已构建的球队面板引用
     const buildTeams = (s) => {
@@ -121,9 +126,12 @@ export default {
       primeAudio();
       const res = await store.apply(action);
       if (res.ok) { navigator.vibrate?.(15); sounds.score(); }
-      else if (res.error) showToast(res.error.message);
+      else if (res.error) { showToast(res.error.message); if (res.error.code === 'controller_required') markNoCred(); }
       else if (res.conflict) showToast(res.error.message);
     }
+
+    const markNoCred = () => { credBanner.hidden = false; };
+    if (!store.token) markNoCred();
 
     undoBtn.addEventListener('click', async () => {
       if (undoLock) return;
@@ -161,6 +169,7 @@ export default {
       // 断网期间排队的动作，恢复后遇到业务错误（如比赛已结束）会被服务端丢弃——必须让记分员知道
       if (store.lastBusinessError) {
         showToast(store.lastBusinessError.message);
+        if (store.lastBusinessError.code === 'controller_required') markNoCred();
         store.lastBusinessError = null;
       }
       const s = store.state;

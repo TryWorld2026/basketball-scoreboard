@@ -9,10 +9,10 @@ const ok = (name, cond, detail = '') => {
   else { fail += 1; bugs.push(name); console.log(`FAIL ${name} ${detail}`); }
 };
 
-async function call(qs, { method = 'GET', body } = {}) {
+async function call(qs, { method = 'GET', body, headers = {} } = {}) {
   const res = await fetch(`${API}?${qs}`, {
     method,
-    headers: body ? { 'content-type': 'application/json' } : undefined,
+    headers: { ...(body ? { 'content-type': 'application/json' } : {}), ...headers },
     body: body ? JSON.stringify(body) : undefined,
   });
   let json = null;
@@ -20,7 +20,11 @@ async function call(qs, { method = 'GET', body } = {}) {
   return { status: res.status, json };
 }
 const get = (code) => call(`action=get&code=${code}`);
-const apply = (code, action, version) => call('action=apply', { method: 'POST', body: { code, version, action } });
+const controlTokens = new Map();
+const apply = (code, action, version) => call('action=apply', {
+  method: 'POST', body: { code, version, action },
+  headers: { authorization: `Bearer ${controlTokens.get(code) || ''}` },
+});
 
 const TEAMS = [{ name: 'D1验证甲班', color: '#1E4FD8' }, { name: 'D1验证乙班', color: '#E11D2E' }];
 
@@ -46,6 +50,7 @@ let code; let version;
   const created = await call('action=create', { method: 'POST', body: { teams: TEAMS, config: { periods: 2, periodMinutes: 1, foulLimit: 5, timeouts: 2, trackPlayers: true }, players: [{ team: 0, name: '赵六' }] } });
   ok('create 成功', created.status === 200 && /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$/.test(created.json?.code || ''), JSON.stringify(created.json?.error || created.status));
   code = created.json.code;
+  controlTokens.set(code, created.json.controlToken);
   version = created.json.version;
   ok('初始状态 setup / 0:0', created.json?.state?.status === 'setup' && created.json?.state?.teams?.[0]?.score === 0);
   const read = await get(code);
@@ -119,6 +124,8 @@ console.log('\n— 协议健壮性（线上同样生效）—');
   ok('GET 走写接口 405', (await call('action=create')).status === 405);
   const res = await fetch(`${API}?action=get&code=${code}`);
   ok('响应带 no-store', /no-store/.test(res.headers.get('cache-control') || ''), res.headers.get('cache-control'));
+  const anon = await call('action=apply', { method: 'POST', body: { code, version: 0, action: { type: 'foul', team: 0 } } });
+  ok('匿名写入被 403 拒（房间码只给读）', anon.status === 403 && anon.json?.error === 'controller_required', `${anon.status} ${JSON.stringify(anon.json)}`);
 }
 
 console.log(`\n结果：通过 ${pass} / 失败 ${fail}`);

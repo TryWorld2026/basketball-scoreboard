@@ -18,6 +18,8 @@ const MESSAGES = {
   already_break: '当前已是节间休息',
   shot_clock_off: '本场未开启进攻时限',
   nothing_to_undo: '没有可撤销的操作',
+  controller_required: '此设备没有控制凭证——请用创建比赛的手机操作，或在房间页复制「控制端链接」',
+  reset_not_allowed: '只能重开已结束的比赛',
   conflict: '状态已被其他操作更新，已自动刷新',
   invalid_version: '操作已过期，请重试',
   invalid_body: '请求内容异常',
@@ -38,13 +40,16 @@ export class ApiError extends Error {
   }
 }
 
-export async function api(path, { method = 'GET', body } = {}) {
+export async function api(path, { method = 'GET', body, token } = {}) {
   let res;
   try {
     res = await fetch(path, {
       method,
       credentials: 'same-origin',
-      headers: body ? { 'content-type': 'application/json' } : undefined,
+      headers: {
+        ...(body ? { 'content-type': 'application/json' } : {}),
+        ...(token ? { authorization: `Bearer ${token}` } : {}), // 只挂在写请求上；GET/大屏/数据卡永不带
+      },
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch {

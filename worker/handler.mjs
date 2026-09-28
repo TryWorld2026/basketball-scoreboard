@@ -16,7 +16,37 @@ const STALE_SETUP_MS = 24 * 60 * 60 * 1000;
 // 半途放弃的比赛（建赛后超过 7 天没有任何写入）也清理，避免库只增不减
 const ABANDONED_MS = 7 * 24 * 60 * 60 * 1000;
 
-// 默认限流器：按 isolate 计数，只统计失败请求（房间不存在/非法参数/冲突）
+const bytesToHex = (bytes) => [...new Uint8Array(bytes)].map((x) => x.toString(16).padStart(2, '0')).join('');
+async function newControllerCredential() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  const token = bytesToHex(bytes);
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+  return { token, hash: bytesToHex(digest) };
+}
+async function hashCredential(token) {
+  if (typeof token !== 'string' || !/^[0-9a-f]{64}$/.test(token)) return null;
+  return bytesToHex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token)));
+}
+function sameHash(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i += 1) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+const bearer = (request) => /^Bearer ([0-9a-f]{64})$/.exec(request.headers.get('authorization') || '')?.[1] || null;
+
+// 写路径持凭证：房间码只给读，控制凭证才给写。
+// 凭证签发时只明文回一次，库里只存 SHA-256；老行没有 controller_hash 一律 fail closed
+// （只读，finished 的数据卡链接不受影响）。
+async function authorize(request, storedHash) {
+  if (typeof storedHash !== 'string' || !storedHash) return false;
+  const token = bearer(request);
+  if (!token) return false;
+  const presented = await hashCredential(token);
+  return presented ? sameHash(presented, storedHash) : false;
+}
+
+// 默认限流器：按 isolate 计数，只统计失败请求（房间不存在/非法参数/冲突/凭证不符）
 const DEFAULT_LIMITERS = {
   fail: createRateLimiter({ limit: 60, windowMs: 60_000 }),      // 读/写失败：每分钟 60 次
   create: createRateLimiter({ limit: 20, windowMs: 60 * 60_000 }), // 建赛：每小时 20 场
@@ -77,6 +107,7 @@ async function handleCreate(store, limiters, request) {
   const config = sanitizeConfig(body.data.config);
   const players = config.trackPlayers ? sanitizePlayers(body.data.players, teams) : [];
   const state = emptyState(config, teams, players);
+  const credential = await newControllerCredential();
 
   // 顺带清理：筹建中但 24h 未开打的废弃房间，以及超过 7 天没有任何写入的半途放弃局
   // （尽力而为，失败不阻塞创建）
@@ -87,10 +118,10 @@ async function handleCreate(store, limiters, request) {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const code = newCode();
     const now = new Date().toISOString();
-    const inserted = await store.insertGame({ code, status: 'setup', version: 0, state, created_at: now, updated_at: now });
+    const inserted = await store.insertGame({ code, status: 'setup', version: 0, state, created_at: now, updated_at: now, controller_hash: credential.hash });
     if (inserted.error === 'duplicate') continue; // 房间码竞争，换码重试
     if (inserted.error) return dbError();
-    return json({ code, status: 'setup', version: 0, state, serverTime: now });
+    return json({ code, status: 'setup', version: 0, state, serverTime: now, controlToken: credential.token });
   }
   return json({ error: 'code_exhausted' }, 503);
 }
@@ -109,6 +140,9 @@ async function handleApply(store, limiters, request) {
     const row = await store.getGame(code);
     if (row === null) return throttled(limiters, request, json({ error: 'game_not_found' }, 404));
     if (!row || row.error) return dbError();
+    if (!(await authorize(request, row.controller_hash))) {
+      return throttled(limiters, request, json({ error: 'controller_required' }, 403));
+    }
     const nowMs = Date.now();
     const result = applyAction(row.state, action, new Date(nowMs).toISOString(), nowMs);
     if (result.error) return json({ error: result.error }, result.status || 400);

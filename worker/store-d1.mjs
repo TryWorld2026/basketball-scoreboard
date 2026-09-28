@@ -7,7 +7,7 @@ export function createD1Store(db) {
   return {
     async getGame(code) {
       const row = await db
-        .prepare('SELECT code, status, version, state, created_at, updated_at FROM games WHERE code = ?')
+          .prepare('SELECT code, status, version, state, created_at, updated_at, controller_hash FROM games WHERE code = ?')
         .bind(code)
         .first();
       if (!row) return null;
@@ -21,8 +21,8 @@ export function createD1Store(db) {
     async insertGame(game) {
       try {
         await db
-          .prepare('INSERT INTO games (code, status, version, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
-          .bind(game.code, game.status, game.version, JSON.stringify(game.state), game.created_at, game.updated_at)
+          .prepare('INSERT INTO games (code, status, version, state, created_at, updated_at, controller_hash) VALUES (?, ?, ?, ?, ?, ?, ?)')
+          .bind(game.code, game.status, game.version, JSON.stringify(game.state), game.created_at, game.updated_at, game.controller_hash)
           .run();
       } catch (e) {
         const msg = `${e?.message || ''} ${e?.cause?.message || ''}`;
@@ -45,6 +45,41 @@ export function createD1Store(db) {
       const changed = asInt(result?.meta?.changes ?? 0);
       if (changed > 1) return { error: 'db' }; // 主键唯一，>1 说明约束被改坏
       return { changed: changed === 1, version: expectedVersion + 1 };
+    },
+
+    async hasReceipt(code, nonce) {
+      const row = await db.prepare('SELECT 1 AS found FROM action_receipts WHERE code = ? AND nonce = ?')
+        .bind(code, nonce).first();
+      return !!row;
+    },
+
+    async recordReceipt(code, expectedVersion, nonce, createdAt) {
+      let result;
+      try {
+        result = await db.prepare('INSERT OR IGNORE INTO action_receipts (code, nonce, created_at) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM games WHERE code = ? AND version = ?)')
+          .bind(code, nonce, createdAt, code, expectedVersion).run();
+      } catch { return { error: 'db' }; }
+      const changed = asInt(result?.meta?.changes ?? 0);
+      if (changed === 1) return { changed: true };
+      return { changed: false, duplicate: await this.hasReceipt(code, nonce) };
+    },
+
+    async casUpdateGameWithReceipt(code, expectedVersion, patch, nonce) {
+      let results;
+      try {
+        results = await db.batch([
+          db.prepare('INSERT OR IGNORE INTO action_receipts (code, nonce, created_at) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM games WHERE code = ? AND version = ?)')
+            .bind(code, nonce, patch.updated_at, code, expectedVersion),
+          db.prepare('UPDATE games SET status = ?, version = ?, state = ?, updated_at = ? WHERE code = ? AND version = ? AND EXISTS (SELECT 1 FROM action_receipts WHERE code = ? AND nonce = ?)')
+            .bind(patch.status, expectedVersion + 1, JSON.stringify(patch.state), patch.updated_at, code, expectedVersion, code, nonce),
+        ]);
+      } catch {
+        return { error: 'db' };
+      }
+      const receiptChanges = asInt(results?.[0]?.meta?.changes ?? 0);
+      const gameChanges = asInt(results?.[1]?.meta?.changes ?? 0);
+      if (gameChanges > 1 || receiptChanges > 1) return { error: 'db' };
+      return { changed: gameChanges === 1, duplicate: receiptChanges === 0 && await this.hasReceipt(code, nonce), version: expectedVersion + 1 };
     },
 
     async deleteStaleSetup(beforeIso) {

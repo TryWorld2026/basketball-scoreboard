@@ -19,17 +19,20 @@ function fresh() {
     fail: createRateLimiter({ limit: 10_000, windowMs: 60_000 }),
     create: createRateLimiter({ limit: 10_000, windowMs: 60_000 }),
   };
-  const call = async (method, qs, body) => {
+  const controlTokens = new Map();
+  const call = async (method, qs, body, extraHeaders = {}) => {
     const req = new Request(`http://s/api/game?${qs}`, {
       method,
-      headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
+      headers: { ...(body !== undefined ? { 'content-type': 'application/json' } : {}), ...extraHeaders },
       body: body !== undefined ? (typeof body === 'string' ? body : JSON.stringify(body)) : undefined,
     });
     const res = await handleGames({ request: req, store, limiters });
     let json = null; try { json = await res.json(); } catch { /* */ }
     return { status: res.status, json };
   };
-  const raw = (code, version, action) => call('POST', 'action=apply', { code, version, action });
+  const raw = (code, version, action) => call('POST', 'action=apply', { code, version, action }, {
+    authorization: `Bearer ${controlTokens.get(code) || ''}`,
+  });
   const apply = async (code, action) => {
     const g = await call('GET', `action=get&code=${code}`);
     const r = await raw(code, g.json.version, action);
@@ -43,9 +46,62 @@ function fresh() {
       players: [{ team: 0, name: '张三' }],
       ...over,
     });
-    return { code: c.json.code, v: () => get(c.json.code) };
+    controlTokens.set(c.json.code, c.json.controlToken);
+    return { code: c.json.code, created: c.json, v: () => get(c.json.code) };
   };
   return { store, call, raw, apply, get, newGame };
+}
+
+console.log('\n[0] 房间只读与控制凭证分离');
+{
+  const { call, newGame } = fresh();
+  const { code, created } = await newGame();
+  const read = await call('GET', `action=get&code=${code}`);
+  const controlWrite = await call('POST', 'action=apply', {
+    code, version: read.json.version,
+    action: { type: 'score', team: 0, points: 2 },
+  }, { authorization: `Bearer ${created.controlToken || ''}` });
+  const anonymousWrite = await call('POST', 'action=apply', {
+    code, version: read.json.version, action: { type: 'score', team: 0, points: 2 },
+  });
+  ok('新比赛签发独立控制凭证', typeof created.controlToken === 'string' && created.controlToken.length >= 32,
+    `字段 ${typeof created.controlToken}`);
+  ok('房间码只读不能直接写入', anonymousWrite.status === 403 && anonymousWrite.json?.error === 'controller_required', JSON.stringify(anonymousWrite));
+  ok('创建响应之外的公开读取不泄漏控制凭证', !('controlToken' in read.json) && !('controlTokenHash' in read.json), JSON.stringify(Object.keys(read.json)));
+  ok('控制凭证允许遥控写入', controlWrite.status === 200 && controlWrite.json.state.teams[0].score === 2, JSON.stringify(controlWrite.json));
+}
+
+console.log('\n[0b] 控制凭证对抗面：伪造 / 畸形 / legacy 行 / reset 门禁');
+{
+  // 1) legacy 行（迁移 0002 之前创建，没有 controller_hash）必须 fail closed
+  const { call, store } = fresh();
+  const teams = sanitizeTeams([{ name: 'A', color: '#1E4FD8' }, { name: 'B', color: '#E11D2E' }]);
+  const st = emptyState(sanitizeConfig({}), teams, []);
+  const nowIso = new Date().toISOString();
+  store._rows.set('LEG2', { code: 'LEG2', status: 'live', version: 0, state: st, created_at: nowIso, updated_at: nowIso });
+  const legacyWrite = await call('POST', 'action=apply', { code: 'LEG2', version: 0, action: { type: 'score', team: 0, points: 2 } });
+  ok('legacy 行（无 controller_hash）拒绝写入', legacyWrite.status === 403 && legacyWrite.json?.error === 'controller_required', JSON.stringify(legacyWrite));
+  ok('legacy 行仍可公开读取（数据卡链接不沉）', (await call('GET', 'action=get&code=LEG2')).status === 200);
+
+  // 2) 错凭证 / 畸形凭证 / 非 Bearer 方案：都必须是 403 而不是 500 或放行
+  const { call: c2, newGame } = fresh();
+  const { code, created } = await newGame();
+  const wrong = await c2('POST', 'action=apply', { code, version: 0, action: { type: 'score', team: 0, points: 2 } }, { authorization: `Bearer ${'f'.repeat(64)}` });
+  ok('错误凭证 403', wrong.status === 403 && wrong.json?.error === 'controller_required', JSON.stringify(wrong));
+  const malformed = await c2('POST', 'action=apply', { code, version: 0, action: { type: 'score', team: 0, points: 2 } }, { authorization: 'Bearer not-a-real-token' });
+  ok('畸形凭证 403（不 500）', malformed.status === 403 && malformed.json?.error === 'controller_required', JSON.stringify(malformed));
+  const basic = await c2('POST', 'action=apply', { code, version: 0, action: { type: 'score', team: 0, points: 2 } }, { authorization: `Basic ${created.controlToken}` });
+  ok('非 Bearer 方案 403', basic.status === 403 && basic.json?.error === 'controller_required', JSON.stringify(basic));
+  ok('失败凭证不改变比分', (await c2('GET', `action=get&code=${code}`)).json.state.teams[0].score === 0);
+
+  // 3) reset 只能重开已结束的比赛（进行中擦库不可逆，服务端是门禁）
+  const { apply, newGame: ng3 } = fresh();
+  const g3 = await ng3();
+  const liveReset = await apply(g3.code, { type: 'reset' });
+  ok('进行中 reset 被拒（409 reset_not_allowed）', liveReset.status === 409 && liveReset.json?.error === 'reset_not_allowed', JSON.stringify(liveReset));
+  await apply(g3.code, { type: 'finish' });
+  const doneReset = await apply(g3.code, { type: 'reset' });
+  ok('结束后 reset 放行', !doneReset.json?.error && doneReset.json.status === 'setup', JSON.stringify(doneReset.json?.error));
 }
 
 // 直接改库（模拟时钟耗尽等外部事件），返回新版本

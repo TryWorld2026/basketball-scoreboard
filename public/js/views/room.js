@@ -1,5 +1,5 @@
 // 房间页：大号房间码 + 二维码 + 两端入口。
-import { GameStore } from '../store.js';
+import { GameStore, controlLinkSuffix } from '../store.js';
 import { navigate } from '../router.js';
 import { h } from '../ui.js';
 
@@ -35,6 +35,9 @@ export default {
       }
       const s = store.state;
       const url = `${location.origin}/room/${code}/display`;
+      // 遥控器入口带上凭证 fragment：同设备走 localStorage 也认，换标签页/换人分享时靠它
+      const controlUrl = `${location.origin}/room/${code}/control${controlLinkSuffix(code)}`;
+      const hasCred = controlUrl.includes('#t=');
       body.replaceChildren(
         h('section', { class: 'panel center' },
           h('p', { class: 'muted' }, '房间码'),
@@ -47,7 +50,7 @@ export default {
             h('span', { style: `--tc:${s.teams[1].color}` }, s.teams[1].name)),
           h('div', { class: 'btn-row' },
             h('button', { class: 'primary big', type: 'button', onclick: () => navigate(`/room/${code}/display`) }, '打开大屏'),
-            h('button', { class: 'ghost big', type: 'button', onclick: () => navigate(`/room/${code}/control`) }, '打开遥控器')),
+            h('button', { class: 'ghost big', type: 'button', onclick: () => navigate(`/room/${code}/control${controlLinkSuffix(code)}`) }, '打开遥控器')),
           h('button', {
             class: 'ghost', type: 'button',
             onclick: async (e) => {
@@ -55,6 +58,14 @@ export default {
               catch { e.target.textContent = '复制失败，请长按地址栏复制'; }
             },
           }, '复制大屏链接'),
+          hasCred && h('button', {
+            class: 'ghost', type: 'button',
+            onclick: async (e) => {
+              try { await navigator.clipboard.writeText(controlUrl); e.target.textContent = '已复制 ✓'; }
+              catch { e.target.textContent = '复制失败'; }
+            },
+          }, '复制控制端链接'),
+          !hasCred && h('p', { class: 'cred-hint' }, '此设备没有控制凭证：大屏与数据卡照常打开，改比分请用创建比赛的手机，或让它复制「控制端链接」'),
           store.status !== 'setup' && h('a', { class: 'status-link', href: `/room/${code}/control`, 'data-link': true },
             store.status === 'finished' ? '比赛已结束 → 查看数据卡' : '比赛进行中 → 回到控制端')));
     };

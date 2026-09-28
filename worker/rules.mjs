@@ -203,6 +203,9 @@ function runAction(s, action, nowIso, nowMs) {
   if (s.status === 'finished' && type !== 'reset') return { error: 'game_finished', status: 409 };
 
   if (type === 'reset') {
+    // 只能重开已结束的比赛：进行中擦库是记分员最怕的误触且不可逆。
+    // UI 也只在结束后显示「重开一场」——服务端这条是门禁，不信客户端。
+    if (s.status !== 'finished') return { error: 'reset_not_allowed', status: 409 };
     const fresh = emptyState(
       s.config,
       s.teams.map((t) => ({ name: t.name, color: t.color })),

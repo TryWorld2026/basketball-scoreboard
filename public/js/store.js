@@ -3,7 +3,37 @@ import { api } from './api.js';
 import { deriveClock, deriveShot } from './clock.js';
 
 const QUEUE_KEY = (code) => `bsq:${code}`;
+const TOKEN_KEY = (code) => `bs-token:${code}`;
 const STALE_MS = 3000;
+
+// 控制凭证：create 响应里明文只回一次，之后只活在创建比赛的那台设备上。
+// 按房间码分键存 localStorage——记分员的手机可能被系统杀后台重开，凭证要活过整场。
+export function rememberControlToken(code, token) {
+  try { if (token) localStorage.setItem(TOKEN_KEY(code), token); } catch { /* 隐私模式：按无凭证走，服务端 403 会提示 */ }
+}
+export function controlTokenOf(code) {
+  try { return localStorage.getItem(TOKEN_KEY(code)); } catch { return null; }
+}
+// 「复制控制端链接」用：fragment 不进服务端日志与轮询，只在用户主动分享时出现。
+export const controlLinkSuffix = (code) => {
+  const t = controlTokenOf(code);
+  return t ? `#t=${t}` : '';
+};
+
+function readControlToken(code) {
+  try {
+    const saved = controlTokenOf(code);
+    if (saved) return saved;
+    const m = /^#t=([0-9a-f]{64})$/.exec(location.hash || '');
+    if (m) {
+      rememberControlToken(code, m[1]);
+      // 凭证不留在地址栏和历史记录里：换设备分享的是链接，不是永久后门
+      history.replaceState(null, '', location.pathname + location.search);
+      return m[1];
+    }
+  } catch { /* 无 DOM 环境（测试桩）按无凭证处理 */ }
+  return null;
+}
 
 // 幂等键：响应丢失后补发同一意图时，服务端据此只记一次
 const newNonce = () => (crypto.randomUUID
@@ -21,6 +51,7 @@ export class GameStore {
     this.lastOkAt = 0;
     this.queue = [];
     this.listeners = new Set();
+    this.token = readControlToken(code);
     this._timer = null;
     this._draining = false;
     this._onVisible = () => { if (!document.hidden) this._tick(); };
@@ -90,6 +121,7 @@ export class GameStore {
       const snap = await api('/api/game?action=apply', {
         method: 'POST',
         body: { code: this.code, version: this.version, action },
+        token: this.token,
       });
       this._accept(snap);
       return { ok: true, state: snap.state };

@@ -43,7 +43,7 @@ function fakeServer() {
 
   globalThis.fetch = async (path, opts = {}) => {
     const body = opts.body ? JSON.parse(opts.body) : null;
-    calls.push({ path, body });
+    calls.push({ path, body, headers: opts.headers });
     if (failNext > 0) { failNext -= 1; throw new TypeError('fetch failed'); }
     const url = new URL(path, 'http://x');
     clock += 5; // 每次请求推进 5ms，模拟服务器时钟
@@ -203,6 +203,39 @@ console.log('\n— 信号弱判定 —');
   ok('刚同步过不算 stale', store.stale() === false);
   store.lastOkAt = store.now() - 4000;
   ok('超过 3 秒无响应判定为信号弱', store.stale() === true);
+}
+
+// ---------- 9. 控制凭证：只挂写请求，永不挂 GET ----------
+console.log('\n— 控制凭证只上写路径 —');
+{
+  mem.clear();
+  const server = fakeServer();
+  globalThis.location = { hash: '', pathname: '/room/AB23/control', search: '' };
+  globalThis.history = { replaceState: () => {} };
+  const tok = 'a'.repeat(64);
+  mem.set('bs-token:AB23', tok);
+  const store = new GameStore('AB23');
+  ok('从 localStorage 读到控制凭证', store.token === tok);
+  await store.apply({ type: 'score', team: 0, points: 2 });
+  const post = server.calls.find((c) => c.path.includes('apply'));
+  ok('apply 请求带 Authorization: Bearer', post?.headers?.authorization === `Bearer ${tok}`, JSON.stringify(post?.headers));
+  await store._tick();
+  const get = server.calls.filter((c) => c.path.includes('action=get')).pop();
+  ok('GET 轮询不带凭证（大屏/数据卡永不被授权）', !get?.headers?.authorization, JSON.stringify(get?.headers));
+}
+
+// ---------- 10. fragment 分享的控制端链接：收编凭证后立即抹掉 ----------
+console.log('\n— fragment 凭证交接 —');
+{
+  mem.clear();
+  fakeServer();
+  const tok = 'b'.repeat(64);
+  globalThis.location = { hash: `#t=${tok}`, pathname: '/room/CD45/control', search: '' };
+  let replaced = null;
+  globalThis.history = { replaceState: (_s, _t, url) => { replaced = url; } };
+  const store = new GameStore('CD45');
+  ok('fragment 里的凭证被收编并持久化', store.token === tok && mem.get('bs-token:CD45') === tok);
+  ok('fragment 被从地址栏抹掉（凭证不留在历史记录里）', replaced === '/room/CD45/control', String(replaced));
 }
 
 console.log(`\n通过 ${pass} / 失败 ${fail}`);

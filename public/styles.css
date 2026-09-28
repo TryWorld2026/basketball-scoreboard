@@ -113,6 +113,17 @@ select.inp { appearance: none; }
 .form-error { color: #FF8FA0; font-size: .92rem; margin: .8rem 0 0; }
 .big-err { font-size: 1.2rem; color: #FF8FA0; }
 
+/* 无控制凭证提示（控制端常驻，说清怎么救） */
+.cred-err {
+  margin: .8rem .9rem 0; padding: .8rem 1rem;
+  background: rgba(245, 158, 11, .1); border: 1px solid rgba(245, 158, 11, .45);
+  border-radius: 12px; color: var(--ink);
+}
+.cred-err .cred-title { font-weight: 800; color: var(--amber); margin: 0 0 .25rem; }
+.cred-err .cred-sub { margin: 0; font-size: .85rem; color: var(--muted); line-height: 1.5; }
+/* 房间页的无凭证说明（普通文本，不吃按钮版 .small 的 44px 命中区） */
+.cred-hint { margin: .6rem 0 0; font-size: .85rem; color: var(--muted); line-height: 1.5; }
+
 /* ---------- 首页 ---------- */
 .brand { display: flex; align-items: center; gap: .7rem; padding: 1rem 1.2rem; border-bottom: 1px solid var(--line); }
 .brand h1 { font-size: 1.25rem; letter-spacing: .02em; }

@@ -11,6 +11,9 @@ export function createFakeStore(seed = []) {
       const row = rows.get(code);
       return row ? structuredClone(row) : null;
     },
+    async hasReceipt(code, nonce) {
+      return [...rows.values()].some((row) => row.code === code && row.receipts?.includes(nonce));
+    },
     async insertGame(game) {
       if (rows.has(game.code)) return { error: 'duplicate' };
       rows.set(game.code, structuredClone(game));
@@ -24,6 +27,25 @@ export function createFakeStore(seed = []) {
       row.state = structuredClone(patch.state);
       row.updated_at = patch.updated_at;
       return { changed: true, version: row.version };
+    },
+    async casUpdateGameWithReceipt(code, expectedVersion, patch, nonce) {
+      const row = rows.get(code);
+      if (!row || row.version !== expectedVersion || (row.receipts || []).includes(nonce)) {
+        return { changed: false, duplicate: !!row?.receipts?.includes(nonce), version: expectedVersion + 1 };
+      }
+      row.status = patch.status;
+      row.version = expectedVersion + 1;
+      row.state = structuredClone(patch.state);
+      row.updated_at = patch.updated_at;
+      row.receipts = [...(row.receipts || []), nonce];
+      return { changed: true, version: row.version };
+    },
+    async recordReceipt(code, expectedVersion, nonce) {
+      const row = rows.get(code);
+      if (!row || row.version !== expectedVersion) return { changed: false };
+      if ((row.receipts || []).includes(nonce)) return { changed: false, duplicate: true };
+      row.receipts = [...(row.receipts || []), nonce];
+      return { changed: true };
     },
     async deleteStaleSetup(beforeIso) {
       for (const [code, row] of [...rows]) {

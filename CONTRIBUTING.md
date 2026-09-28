@@ -20,7 +20,7 @@ npm run dev            # http://127.0.0.1:8787
 npm test
 ```
 
-五张网分别是主流程冒烟、对抗探针、前端仓库层、双端时钟镜像一致性、变异测试。**变异测试是这里的门槛**：它把每处修复逐个还原，要求断言必须变红、且红在该管它的断言上；跑之前还会先确认基线全绿（否则红可能只是基线本来就红，整张表结论失真）。新增修复时，请同时往 `dev/mutate.mjs` 里加对应变异体——否则那条修复等于没被测到。
+六张网分别是主流程冒烟、对抗探针、前端仓库层、双端时钟镜像一致性、移动端静态断言、变异测试。**变异测试是这里的门槛**：它把每处修复逐个还原，要求断言必须变红、且红在该管它的断言上；跑之前还会先确认基线全绿（否则红可能只是基线本来就红，整张表结论失真）。新增修复时，请同时往 `dev/mutate.mjs` 里加对应变异体——否则那条修复等于没被测到。
 
 另外两条硬规矩：
 
@@ -37,7 +37,7 @@ CI（`.github/workflows/test.yml`）会在每次 push 和 PR 上跑这套；部�
 | 位置 | 职责 | 约束 |
 |---|---|---|
 | `worker/rules.mjs` | 规则引擎 | **纯函数，禁止 I/O**。时钟推算与 `public/js/clock.js` 是镜像实现，改一处必须同步另一处（`dev/parity.mjs` 会比对） |
-| `worker/handler.mjs` | HTTP 与并发 | 只依赖注入的 `store` 接口，不要在这里写 SQL。限流器可注入（`limiters` 参数），测试用注入的紧凑上限，不靠默认值 |
+| `worker/handler.mjs` | HTTP 与并发 | 只依赖注入的 `store` 接口，不要在这里写 SQL。限流器可注入（`limiters` 参数），测试用注入的紧凑上限，不靠默认值。**写路径（apply）必须先过 `authorize`：房间码只给读，控制凭证才给写；老行无凭证一律 fail closed** |
 | `worker/ratelimit.mjs` | 限流 | 进程内计数、只统计失败请求；不得统计正常轮询（会误伤 1 秒刷新） |
 | `worker/store-d1.mjs` | 数据适配 | 换数据库只需重写这一层，保持 `getGame / insertGame / casUpdateGame / deleteStaleSetup / deleteAbandoned` 语义 |
 | `public/js/clock.js` | 前端时钟/节次判定 | `derive*` 必须是 `worker/rules.mjs` 的镜像；纯前端判定（如 `periodNextFinishes`）由 `dev/parity.mjs` 拿服务端落库结果反锁 |

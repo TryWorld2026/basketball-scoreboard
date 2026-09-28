@@ -104,6 +104,26 @@ const mutants = [
     suite: 'attack', mustRedOn: '第二次撤销应报 nothing_to_undo',
   },
   {
+    name: 'M29 写路径凭证校验被移除（房间码又能直接改比分）',
+    file: HANDLER,
+    from: `async function authorize(request, storedHash) {
+  if (typeof storedHash !== 'string' || !storedHash) return false;
+  const token = bearer(request);
+  if (!token) return false;
+  const presented = await hashCredential(token);
+  return presented ? sameHash(presented, storedHash) : false;
+}`,
+    to: `async function authorize() { return true; /* MUTANT: 凭证校验删除 */ }`,
+    suite: 'attack', mustRedOn: '房间码只读不能直接写入',
+  },
+  {
+    name: 'M30 reset 门禁被移除（进行中也能擦库重开）',
+    file: RULES,
+    from: `    if (s.status !== 'finished') return { error: 'reset_not_allowed', status: 409 };`,
+    to: `    /* MUTANT: reset 门禁删除 */`,
+    suite: 'attack', mustRedOn: '进行中 reset 被拒（409 reset_not_allowed）',
+  },
+  {
     name: 'M12 结束后仍可改分',
     file: RULES,
     from: `  if (s.status === 'finished' && type !== 'reset') return { error: 'game_finished', status: 409 };`,

@@ -10,10 +10,11 @@ const check = (name, cond, extra = '') => {
   else { fail += 1; console.log(`FAIL  ${name} ${extra}`); }
 };
 
-async function call(method, qs, body) {
+const controlTokens = new Map();
+async function call(method, qs, body, extraHeaders = {}) {
   const req = new Request(`http://site/api/game?${qs}`, {
     method,
-    headers: body ? { 'content-type': 'application/json' } : undefined,
+    headers: { ...(body ? { 'content-type': 'application/json' } : {}), ...extraHeaders },
     body: body ? JSON.stringify(body) : undefined,
   });
   const res = await handleGames({ request: req, store });
@@ -21,7 +22,10 @@ async function call(method, qs, body) {
   try { json = await res.json(); } catch { /* ignore */ }
   return { status: res.status, json };
 }
-const apply = (code, version, action) => call('POST', 'action=apply', { code, version, action });
+const authorizedApply = (code, version, action) => call('POST', 'action=apply', { code, version, action }, {
+  authorization: `Bearer ${controlTokens.get(code) || ''}`,
+});
+const apply = authorizedApply;
 
 const base = {
   teams: [{ name: '计算机1班', color: '#1E4FD8' }, { name: '软件工程2班', color: '#E11D2E' }],
@@ -33,6 +37,7 @@ console.log('— 创建与读取 —');
 const created = await call('POST', 'action=create', base);
 check('create 返回 200', created.status === 200, JSON.stringify(created.json));
 const code = created.json?.code || '';
+controlTokens.set(code, created.json?.controlToken);
 check('房间码 4 位合法', /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$/.test(code), code);
 check('初始比分 0:0', created.json?.state?.teams?.[0]?.score === 0);
 let version = created.json?.version ?? 0;
@@ -44,24 +49,24 @@ check('不存在房间 404', bad.status === 404 && bad.json?.error === 'game_not
 check('非法房间码 400', (await call('GET', 'action=get&code=0O1I')).status === 400);
 
 console.log('— 比分与撤销 —');
-let r = await apply(code, version, { type: 'score', team: 0, points: 2, playerId: '张伟' });
+let r = await authorizedApply(code, version, { type: 'score', team: 0, points: 2, playerId: '张伟' });
 version = r.json.version;
 check('+2 生效', r.json.state.teams[0].score === 2 && r.json.state.players[0].points === 2, JSON.stringify(r.json?.state?.teams?.[0]));
 check('得分后状态 live', r.json.status === 'live');
 check('首节流水 +2', r.json.state.teams[0].periodScores[0] === 2);
-r = await apply(code, version, { type: 'undo' });
+r = await authorizedApply(code, version, { type: 'undo' });
 version = r.json.version;
 check('撤销回退比分', r.json.state.teams[0].score === 0);
-check('无可撤销时报错', (await apply(code, version, { type: 'undo' })).json?.error === 'nothing_to_undo');
+check('无可撤销时报错', (await authorizedApply(code, version, { type: 'undo' })).json?.error === 'nothing_to_undo');
 
 console.log('— 犯规与 BONUS —');
-for (let i = 0; i < 5; i += 1) { r = await apply(code, version, { type: 'foul', team: 1 }); version = r.json.version; }
+for (let i = 0; i < 5; i += 1) { r = await authorizedApply(code, version, { type: 'foul', team: 1 }); version = r.json.version; }
 check('客队犯规累计 5', r.json.state.teams[1].fouls === 5);
 
 console.log('— 时钟 —');
-r = await apply(code, version, { type: 'clock_start' }); version = r.json.version;
+r = await authorizedApply(code, version, { type: 'clock_start' }); version = r.json.version;
 check('开始计时 running', r.json.state.clock.running === true);
-r = await apply(code, version, { type: 'clock_stop' }); version = r.json.version;
+r = await authorizedApply(code, version, { type: 'clock_stop' }); version = r.json.version;
 check('停止计时', r.json.state.clock.running === false);
 
 console.log('— 归零自动进节（直接改库模拟时钟耗尽）—');
@@ -69,18 +74,18 @@ const row = store._rows.get(code);
 row.state.clock.running = true;
 row.state.clock.since = new Date().toISOString();
 row.state.clock.remainingMs = -10;
-r = await apply(code, row.version, { type: 'clock_zero' }); version = r.json.version;
+r = await authorizedApply(code, row.version, { type: 'clock_zero' }); version = r.json.version;
 check('归零后进入节间', r.json.state.clock.mode === 'break' && r.json.state.clock.period === 2, JSON.stringify(r.json?.state?.clock));
 check('新一节犯规清零', r.json.state.teams[1].fouls === 0);
 check('foulsTotal 全场累计，不随节清零', r.json.state.teams[1].foulsTotal === 5, `实际 ${r.json.state.teams[1].foulsTotal}`);
 // 节间归零 → 回比赛模式
 const row2 = store._rows.get(code);
 row2.state.clock.remainingMs = -10;
-r = await apply(code, row2.version, { type: 'clock_zero' }); version = r.json.version;
+r = await authorizedApply(code, row2.version, { type: 'clock_zero' }); version = r.json.version;
 check('节间结束回比赛计时', r.json.state.clock.mode === 'game' && r.json.state.clock.running === false);
 // 撤销要把累计数一起回退（snapshot 整队克隆，漏了就是数据卡数字对不上）
-r = await apply(code, version, { type: 'foul', team: 1 }); version = r.json.version;
-r = await apply(code, version, { type: 'undo' }); version = r.json.version;
+r = await authorizedApply(code, version, { type: 'foul', team: 1 }); version = r.json.version;
+r = await authorizedApply(code, version, { type: 'undo' }); version = r.json.version;
 check('撤销回退 foulsTotal', r.json.state.teams[1].foulsTotal === 5 && r.json.state.teams[1].fouls === 0,
   `fouls ${r.json.state.teams[1].fouls} total ${r.json.state.teams[1].foulsTotal}`);
 
@@ -117,6 +122,7 @@ console.log('— 24 秒与球权 —');
 const c2 = await call('POST', 'action=create', { ...base, config: { ...base.config, shotClock: true } });
 check('开启 24 秒的场次创建成功', c2.status === 200, JSON.stringify(c2.json));
 const code2 = c2.json?.code || '';
+controlTokens.set(code2, c2.json?.controlToken);
 let v2 = c2.json?.version ?? 0;
 r = await apply(code2, v2, { type: 'clock_start' }); v2 = r.json.version;
 check('开球后 24 秒走表', r.json.state.shot.running === true && r.json.state.shot.remainingMs === 24000, JSON.stringify(r.json.state.shot));

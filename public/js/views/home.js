@@ -2,6 +2,7 @@
 import { api } from '../api.js';
 import { navigate } from '../router.js';
 import { h, COLORS, colorPicker } from '../ui.js';
+import { rememberControlToken } from '../store.js';
 
 const CODE_RE = /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$/;
 
@@ -96,6 +97,8 @@ export default {
             players: list,
           },
         });
+        // 控制凭证只落这台设备：房间码给所有人读，写比分要凭证
+        rememberControlToken(res.code, res.controlToken);
         navigate(`/room/${res.code}`);
       } catch (e) {
         showErr(e.message);

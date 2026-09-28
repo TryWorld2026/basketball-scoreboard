@@ -1,6 +1,6 @@
 # 篮球计分板 · 设计文档
 
-日期：2026-09-24 ｜ 状态：已逐节确认，待实现 ｜ 项目：Qoder Site（E:\CodingXM\测试）
+日期：2026-09-24（2026-09-28 修订）｜ 状态：已实现并部署（score.tryworld.com.cn）｜ 项目：篮球计分板
 
 ---
 
@@ -138,7 +138,7 @@ create table games (
   code        text primary key,            -- 4位房间码（字符集去 0O1I）
   status      text not null default 'setup',-- setup|live|break|timeout|finished
   version     integer not null default 0,   -- 每次写 +1，CAS 用
-  state       jsonb not null,               -- 见下
+  state       json  not null,               -- 见下（SQLite 存 JSON 文本）
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now()
 );
@@ -240,9 +240,9 @@ create table games (
 9. 错误房间码 → 友好提示 —— 实测通过
 10. 部署后真实请求验证 —— **已完成**：`node dev/d1-check.mjs <线上地址>` 对 Cloudflare 生产环境 27/27 通过（含真 SQL CAS、幂等 noop、并发双写、SPA 深链、no-store），并在浏览器中确认跨进程写入经轮询反映到大屏
 
-**测试网（本地）**：`node dev/smoke.mjs` 27 项主流程；`node dev/attack.mjs` 60 项对抗探针（幂等、并发、跳节滥用、类型强制、不可逆性、无界增长、注入面、协议健壮性、胜负判定）；`node dev/mutate.mjs` 15 个变异体全部被击杀（证明每条断言都不是空断言）。
+**测试网（本地，`npm test` 六张）**：`node dev/smoke.mjs` 34 项主流程；`node dev/attack.mjs` 98 项对抗探针（幂等、并发、跳节滥用、类型强制、不可逆性、无界增长、注入面、协议健壮性、胜负判定、控制凭证对抗面）；`dev/store.mjs` 27 项前端仓库层；`dev/parity.mjs` 49 项双端时钟镜像一致性；`dev/mobile.mjs` 31 项移动端静态断言；`dev/mutate.mjs` 30 个变异体全部被击杀（证明每条断言都不是空断言）。
 
-**对抗审查净新增的修复**：幂等键缺失（响应丢失补发会双计）、休息/暂停期间记分串节、未开打可烧暂停、`Number()` 静默吞脏输入、无变化写库涨版本造成冲突风暴、休息中无法提前开打、控制端不显示剩余暂停。
+**对抗审查净新增的修复**：幂等键缺失（响应丢失补发会双计）、休息/暂停期间记分串节、未开打可烧暂停、`Number()` 静默吞脏输入、无变化写库涨版本造成冲突风暴、休息中无法提前开打、控制端不显示剩余暂停、乱序轮询响应覆盖新快照、`reset` 不限终局（进行中可擦库）、房间码即可写比分（已改为控制凭证隔离）。
 
 ## 11. 实现里程碑
 
