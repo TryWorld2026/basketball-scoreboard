@@ -1,10 +1,18 @@
 // 比赛状态仓库：每秒轮询 + 服务器时钟偏移 + 断网动作队列。
-import { api } from './api.js';
+import { api, ApiError } from './api.js';
 import { deriveClock, deriveShot } from './clock.js';
 
 const QUEUE_KEY = (code) => `bsq:${code}`;
 const TOKEN_KEY = (code) => `bs-token:${code}`;
 const STALE_MS = 3000;
+// 队列只有一份上限：内存与 localStorage 共用。超限拒绝新动作并明说，
+// 而不是像旧实现那样持久化时静默截断——重开浏览器后那几步就无声无息消失了。
+const QUEUE_LIMIT = 50;
+// 可以排队等补发的动作：已经发生的事实（得分/犯规/球权）与幂等的归零/24 秒重置。
+// 撤销、clock 迁移、终局类的含义依赖"发生的时刻"：迟到落地会吃掉别人后来的操作
+// （撤销吞掉队友刚记的分）、或在错误的比赛上锁错局——这些必须联网才发。
+const DELAY_SAFE = new Set(['score', 'foul', 'possession', 'clock_zero', 'shot_reset']);
+export const isDelaySafe = (action) => DELAY_SAFE.has(action?.type);
 
 // 控制凭证：create 响应里明文只回一次，之后只活在创建比赛的那台设备上。
 // 按房间码分键存 localStorage——记分员的手机可能被系统杀后台重开，凭证要活过整场。
@@ -108,10 +116,24 @@ export class GameStore {
   /** 发送意图。返回 {ok}|{queued}|{conflict,error}|{error} */
   async apply(action) {
     const intent = action && typeof action.nonce === 'string' ? action : { ...action, nonce: newNonce() };
-    if (!this.online || this.queue.length) { this._enqueue(intent); return { queued: true }; }
+    if (!this.online || this.queue.length) {
+      // 延迟不安全的动作（撤销/clock 迁移/终局）不排队：补发的时刻已不是点击的时刻
+      if (!isDelaySafe(intent)) return { error: new ApiError('needs_online') };
+      if (this.queue.length >= QUEUE_LIMIT) return { error: new ApiError('queue_full') };
+      this._enqueue(intent);
+      return { queued: true };
+    }
     const res = await this._post(intent);
     if (res.ok) return res;
-    if (res.error?.code === 'network') { this.online = false; this._enqueue(intent); this.emit(); return { queued: true }; }
+    if (res.error?.code === 'network') {
+      // 响应可能已到服务端（Intent applied, response lost）：nonce 原样保留，补发去重
+      if (!isDelaySafe(intent)) return { error: new ApiError('needs_online') };
+      if (this.queue.length >= QUEUE_LIMIT) return { error: new ApiError('queue_full') };
+      this.online = false;
+      this._enqueue(intent);
+      this.emit();
+      return { queued: true };
+    }
     if (res.error?.code === 'conflict' || res.error?.status === 409) { await this._tick(); return { conflict: true, error: res.error }; }
     return res;
   }
@@ -148,13 +170,17 @@ export class GameStore {
   }
 
   _saveQueue() {
-    try { localStorage.setItem(QUEUE_KEY(this.code), JSON.stringify(this.queue.slice(0, 50))); } catch { /* 隐私模式 */ }
+    // 内存队列已被 apply 挡在 QUEUE_LIMIT 内，这里不再是第二套上限
+    try { localStorage.setItem(QUEUE_KEY(this.code), JSON.stringify(this.queue)); } catch { /* 隐私模式 */ }
   }
   _loadQueue() {
     try {
       const raw = localStorage.getItem(QUEUE_KEY(this.code));
       const parsed = raw ? JSON.parse(raw) : null;
-      if (Array.isArray(parsed)) this.queue = parsed.filter((a) => a && typeof a.type === 'string').slice(0, 50);
+      if (Array.isArray(parsed)) {
+        // 旧版本可能存过延迟不安全的动作（撤销/clock 迁移）：补发的时刻已错，宁可不发
+        this.queue = parsed.filter((a) => a && typeof a.type === 'string' && isDelaySafe(a)).slice(-QUEUE_LIMIT);
+      }
     } catch { this.queue = []; }
   }
 }

@@ -257,6 +257,31 @@ const mutants = [
     to: `  /* MUTANT: 遮罩兜底删除 */`,
     suite: 'mobile', mustRedOn: 'color-mix 一律要有无 color-mix 的兜底声明',
   },
+  {
+    name: 'M31 延迟不安全的动作也能排队（迟到的撤销吃掉队友刚记的分）',
+    file: STOREJS,
+    from: `      // 延迟不安全的动作（撤销/clock 迁移/终局）不排队：补发的时刻已不是点击的时刻
+      if (!isDelaySafe(intent)) return { error: new ApiError('needs_online') };`,
+    to: `      // 延迟不安全的动作（撤销/clock 迁移/终局）不排队：补发的时刻已不是点击的时刻`,
+    suite: 'store', mustRedOn: '断网时撤销拒绝入队（迟到的撤销会吃掉队友后来的操作）',
+  },
+  {
+    name: 'M32 队列硬上限被移除（静默无界增长，重开浏览器后丢步）',
+    file: STOREJS,
+    from: `      if (this.queue.length >= QUEUE_LIMIT) return { error: new ApiError('queue_full') };
+      this._enqueue(intent);
+      return { queued: true };`,
+    to: `      this._enqueue(intent);
+      return { queued: true };`,
+    suite: 'store', mustRedOn: '满额后拒绝新动作并提示（不静默丢弃）',
+  },
+  {
+    name: 'M33 历史队列不再过滤延迟不安全动作',
+    file: STOREJS,
+    from: `        this.queue = parsed.filter((a) => a && typeof a.type === 'string' && isDelaySafe(a)).slice(-QUEUE_LIMIT);`,
+    to: `        this.queue = parsed.filter((a) => a && typeof a.type === 'string').slice(0, 50);`,
+    suite: 'store', mustRedOn: '历史队列里的撤销/终局被滤掉（补发时刻已错）',
+  },
 ];
 
 const runSuite = (which) => {

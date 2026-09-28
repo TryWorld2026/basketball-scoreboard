@@ -124,6 +124,15 @@ select.inp { appearance: none; }
 /* 房间页的无凭证说明（普通文本，不吃按钮版 .small 的 44px 命中区） */
 .cred-hint { margin: .6rem 0 0; font-size: .85rem; color: var(--muted); line-height: 1.5; }
 
+/* ---------- 控制端：待发送队列 ---------- */
+.pending {
+  margin: .6rem .9rem 0; padding: .6rem .8rem;
+  background: rgba(245, 158, 11, .08); border: 1px dashed rgba(245, 158, 11, .45);
+  border-radius: 12px;
+}
+.pending .pending-title { margin: 0 0 .3rem; font-size: .8rem; font-weight: 700; color: var(--amber); }
+.pending .pending-item { margin: 0; font-size: .85rem; color: var(--ink); line-height: 1.6; }
+
 /* ---------- 首页 ---------- */
 .brand { display: flex; align-items: center; gap: .7rem; padding: 1rem 1.2rem; border-bottom: 1px solid var(--line); }
 .brand h1 { font-size: 1.25rem; letter-spacing: .02em; }

@@ -238,5 +238,57 @@ console.log('\n— fragment 凭证交接 —');
   ok('fragment 被从地址栏抹掉（凭证不留在历史记录里）', replaced === '/room/CD45/control', String(replaced));
 }
 
+// ---------- 11. 离线队列边界：延迟不安全的动作不排队，队列有硬上限 ----------
+console.log('\n— 离线队列边界 —');
+{
+  mem.clear();
+  fakeServer();
+  globalThis.location = { hash: '', pathname: '/room/AB23/control', search: '' };
+  globalThis.history = { replaceState: () => {} };
+  const store = new GameStore('AB23');
+  store.online = false;
+  const undoRes = await store.apply({ type: 'undo' });
+  ok('断网时撤销拒绝入队（迟到的撤销会吃掉队友后来的操作）', undoRes.error?.code === 'needs_online' && store.queue.length === 0, JSON.stringify(undoRes));
+  const finishRes = await store.apply({ type: 'finish' });
+  ok('断网时结束比赛拒绝入队（终局时刻错不得）', finishRes.error?.code === 'needs_online' && store.queue.length === 0, JSON.stringify(finishRes));
+  const startRes = await store.apply({ type: 'clock_start' });
+  ok('断网时 clock 迁移拒绝入队', startRes.error?.code === 'needs_online' && store.queue.length === 0, JSON.stringify(startRes));
+  const scoreRes = await store.apply({ type: 'score', team: 0, points: 2 });
+  ok('断网时得分照常排队（已发生的事实）', scoreRes.queued === true && store.queue.length === 1, JSON.stringify(scoreRes));
+}
+
+// ---------- 12. 队列硬上限：拒绝新动作并明说，不静默截断 ----------
+console.log('\n— 队列硬上限 —');
+{
+  mem.clear();
+  fakeServer();
+  globalThis.location = { hash: '', pathname: '/room/AB23/control', search: '' };
+  globalThis.history = { replaceState: () => {} };
+  const store = new GameStore('AB23');
+  store.online = false;
+  for (let i = 0; i < 50; i += 1) await store.apply({ type: 'score', team: 0, points: 1 });
+  ok('队列上限 50 满额', store.queue.length === 50, `实际 ${store.queue.length}`);
+  const overflow = await store.apply({ type: 'score', team: 0, points: 3 });
+  ok('满额后拒绝新动作并提示（不静默丢弃）', overflow.error?.code === 'queue_full' && store.queue.length === 50, JSON.stringify(overflow));
+  ok('持久化的队列与内存一致（没有第二套截断）', JSON.parse(mem.get('bsq:AB23') || '[]').length === 50, mem.get('bsq:AB23')?.length);
+}
+
+// ---------- 13. 旧版本脏队列：延迟不安全的动作加载时即被滤掉 ----------
+console.log('\n— 旧版本队列过滤 —');
+{
+  mem.clear();
+  fakeServer();
+  globalThis.location = { hash: '', pathname: '/room/AB23/control', search: '' };
+  globalThis.history = { replaceState: () => {} };
+  mem.set('bsq:CD45', JSON.stringify([
+    { type: 'score', team: 0, points: 2, nonce: 'n1' },
+    { type: 'undo', nonce: 'n2' },
+    { type: 'finish', nonce: 'n3' },
+    { type: 'foul', team: 1, nonce: 'n4' },
+  ]));
+  const store = new GameStore('CD45');
+  ok('历史队列里的撤销/终局被滤掉（补发时刻已错）', store.queue.length === 2 && store.queue.every((a) => a.type === 'score' || a.type === 'foul'), JSON.stringify(store.queue.map((a) => a.type)));
+}
+
 console.log(`\n通过 ${pass} / 失败 ${fail}`);
 process.exit(fail ? 1 : 0);

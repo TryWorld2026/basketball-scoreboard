@@ -36,11 +36,11 @@
 
 ## Task 3: Bound and make offline operations safe
 
-- [ ] Add failing store tests for queue overflow and disallowed delayed actions.
-- [ ] Enforce one shared in-memory/persisted queue limit; never silently truncate unacknowledged operations.
-- [ ] Queue only explicitly safe scoring/stat actions; reject or require reconnection for undo, clock transitions, finish, and reset.
-- [ ] Surface pending/unconfirmed actions to the operator; preserve strict FIFO drain and nonce reuse.
-- [ ] Run store tests and full test suite.
+- [x] Add failing store tests for queue overflow and disallowed delayed actions.
+- [x] Enforce one shared in-memory/persisted queue limit; never silently truncate unacknowledged operations.
+- [x] Queue only explicitly safe scoring/stat actions; reject or require reconnection for undo, clock transitions, finish, and reset.
+- [x] Surface pending/unconfirmed actions to the operator; preserve strict FIFO drain and nonce reuse.
+- [x] Run store tests and full test suite.
 
 ## Task 4: Make display stale/error states trustworthy
 

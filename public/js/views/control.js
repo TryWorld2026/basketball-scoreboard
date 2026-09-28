@@ -26,6 +26,8 @@ export default {
     const credBanner = h('div', { class: 'cred-err', role: 'alert', hidden: true },
       h('p', { class: 'cred-title' }, '此设备没有该比赛的控制凭证'),
       h('p', { class: 'cred-sub' }, '改比分需要创建比赛的那台手机；或回房间页点「复制控制端链接」在这台设备打开。大屏和数据卡不受影响。'));
+    // 待发送列表：断网时记分员要看见"哪几步还没到服务器"，而不是只看到一个计数
+    const pendingBox = h('div', { class: 'pending', hidden: true });
     const clockLed = new Led({ className: 'led-clock', label: '比赛时钟' });
     const shotLed = new Led({ className: 'led-shot', label: '进攻时限' });
     const possArrow = h('span', { class: 'poss' });
@@ -53,7 +55,7 @@ export default {
           h('div', { class: 'conn' }, statusDot, statusText),
           undoBtn),
         clockArea, teamsBox, footer, toast),
-      credBanner);
+      credBanner, pendingBox);
 
     let built = null; // 已构建的球队面板引用
     const buildTeams = (s) => {
@@ -256,6 +258,31 @@ export default {
       const queued = store.queue.length;
       statusDot.className = `dot ${store.fatal ? 'off' : store.stale() ? 'weak' : queued ? 'queue' : 'on'}`;
       statusText.textContent = store.stale() ? '信号弱' : queued ? `${queued} 个待发送` : '在线';
+      paintPending();
+    }
+
+    // 待发送队列按 nonce 签名做增量渲染——paintClock 每 100ms 跑一次，不能整体重建
+    const actionLabel = (a) => {
+      const s = store.state;
+      const tn = (i) => s?.teams?.[i]?.name || (i === 0 ? '主队' : '客队');
+      if (a.type === 'score') return `${tn(a.team)} +${a.points}${a.playerId ? `（${a.playerId}）` : ''}`;
+      if (a.type === 'foul') return `${tn(a.team)} 犯规 +1`;
+      if (a.type === 'possession') return `球权 → ${tn(a.team)}`;
+      if (a.type === 'clock_zero') return '时钟归零上报';
+      if (a.type === 'shot_reset') return '24 秒重置';
+      return a.type;
+    };
+    function paintPending() {
+      const q = store.queue;
+      if (!q.length) { pendingBox.hidden = true; pendingBox.dataset.sig = ''; return; }
+      const sig = q.map((a) => a.nonce).join('|');
+      if (pendingBox.dataset.sig === sig) return;
+      pendingBox.dataset.sig = sig;
+      pendingBox.replaceChildren(
+        h('p', { class: 'pending-title' }, `待发送 ${q.length} 条 · 恢复联网后按序补发`),
+        ...q.slice(0, 8).map((a) => h('p', { class: 'pending-item' }, actionLabel(a))),
+        q.length > 8 && h('p', { class: 'pending-item muted' }, `……还有 ${q.length - 8} 条`));
+      pendingBox.hidden = false;
     }
 
     const un = store.subscribe(onState);
