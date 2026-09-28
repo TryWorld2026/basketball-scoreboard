@@ -123,10 +123,14 @@ function drawCard(canvas, state, meta) {
   const colW = (dataR - dataL) / (cols + 1);
   const headY = 640, sepY = 664, rowY = [712, 772];
 
+  // 加时节的列头必须是 OT1/OT2，不是 Q5/Q6——否则赛后卡上会出现
+  // 「Q5」这种不存在的节次，看卡的人以为数据错了
+  const periodLabel = (i) => (i < s.config.periods ? `Q${i + 1}` : `OT${i - s.config.periods + 1}`);
+
   ctx.font = F(26); ctx.fillStyle = SUB;
   for (let i = 0; i < cols; i += 1) {
     ctx.textAlign = 'center';
-    ctx.fillText(`Q${i + 1}`, dataL + (i + 0.5) * colW, headY);
+    ctx.fillText(periodLabel(i), dataL + (i + 0.5) * colW, headY);
   }
   ctx.fillStyle = DIM;
   ctx.fillText('合计', dataL + (cols + 0.5) * colW, headY);

@@ -1,7 +1,7 @@
 // 对抗式探针 —— 专打 dev/smoke.mjs 从未询问的维度。每个场景独立假库，避免残留状态伪装成缺陷。
 // 运行：node dev/attack.mjs
 import { handleGames, advanceDueGames } from '../worker/handler.mjs';
-import { applyAction, deriveClock, emptyState, sanitizeConfig, sanitizeTeams } from '../worker/rules.mjs';
+import { applyAction, deriveClock, emptyState, newCode, sanitizeConfig, sanitizeTeams } from '../worker/rules.mjs';
 import { createRateLimiter } from '../worker/ratelimit.mjs';
 import { createFakeStore } from './fake-store.mjs';
 import { readFileSync } from 'node:fs';
@@ -357,6 +357,24 @@ console.log('\n[12] 规则引擎纯函数级攻击（绕过 HTTP 直接打）');
   const again = applyAction(st, { type: 'undo' }, new Date().toISOString(), Date.now());
   ok('第二次撤销应报 nothing_to_undo（单层撤销）', again.error === 'nothing_to_undo', JSON.stringify(again.error));
   ok('撤销后比分回到 +2 那步之后（2 分）', st.teams[0].score === 2, `实际 ${st.teams[0].score}`);
+
+  // 房间码随机源：crypto CSPRNG。房间码是枚举面（4 位 ≈ 81 万组合），
+  // Math.random 是确定性 PRNG、种子可观测，历史码足以推后续——必须换 crypto。
+  {
+    const realCrypto = globalThis.crypto;
+    // Node 里 globalThis.crypto 是只读访问器，只能 defineProperty 换桩
+    Object.defineProperty(globalThis, 'crypto', {
+      value: { getRandomValues: (buf) => { buf[0] = 0; return buf; } },
+      configurable: true, writable: true,
+    });
+    const pinned = newCode(); // 0/2^32 → 索引 0 × 4 → '2222'
+    Object.defineProperty(globalThis, 'crypto', { value: realCrypto, configurable: true, writable: true });
+    ok('房间码默认走 crypto.getRandomValues（不用可预测的 Math.random）', pinned === '2222', pinned);
+  }
+  ok('房间码保留随机源注入位（测试可喂确定性序列）', newCode(() => 0.999999) === 'ZZZZ', newCode(() => 0.999999));
+  let codesOk = true;
+  for (let i = 0; i < 200; i += 1) if (!/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$/.test(newCode())) codesOk = false;
+  ok('房间码 200 次生成全部合规（字符集 + 4 位）', codesOk);
 }
 
 console.log('\n[13] 末节胜负判定（平局才加时；分出胜负必须结束）');

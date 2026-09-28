@@ -4,9 +4,20 @@
 export const CODE_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
 export const MODES = ['game', 'timeout', 'break'];
 
-export function newCode(rand = Math.random) {
+// 房间码随机源：crypto CSPRNG，不用 Math.random。
+// 房间码本身现在只是「读能力」（写路径另有控制凭证），但它仍是可枚举面——
+// Math.random 是确定性 PRNG，种子在 isolate 内可观测、输出可预测，
+// 拿一串历史房间码就能推后续。crypto.getRandomValues 没有这个问题。
+// 保留 rand 注入位：测试可以喂确定性序列。
+const cryptoRand = () => {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return buf[0] / 2 ** 32;
+};
+
+export function newCode(rand = cryptoRand) {
   let out = '';
-  for (let i = 0; i < 4; i++) out += CODE_ALPHABET[Math.floor(rand() * CODE_ALPHABET.length)];
+  for (let i = 0; i < 4; i += 1) out += CODE_ALPHABET[Math.floor(rand() * CODE_ALPHABET.length)];
   return out;
 }
 

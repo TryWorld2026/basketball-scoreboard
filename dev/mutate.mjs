@@ -428,6 +428,27 @@ const mutants = [
     to: `    "binding": "STATIC"`,
     suite: 'attack', mustRedOn: 'assets 绑定显式声明为 ASSETS（与 index.js 读取的一致）',
   },
+  {
+    name: 'M51 房间码退回 Math.random（可预测的枚举面）',
+    file: RULES,
+    from: `export function newCode(rand = cryptoRand) {`,
+    to: `export function newCode(rand = Math.random) {`,
+    suite: 'attack', mustRedOn: '房间码默认走 crypto.getRandomValues（不用可预测的 Math.random）',
+  },
+  {
+    name: 'M52 409 业务结论又被当成冲突（比赛结束提示「别人改了什么」）',
+    file: STOREJS,
+    from: `    if (res.error?.code === 'conflict') { await this._tick(); return { conflict: true, error: res.error }; }`,
+    to: `    if (res.error?.code === 'conflict' || res.error?.status === 409) { await this._tick(); return { conflict: true, error: res.error }; }`,
+    suite: 'store', mustRedOn: 'game_finished(409) 不当成冲突（透传「比赛已结束」原话）',
+  },
+  {
+    name: 'M53 加时节列头退回 Q 编号（赛后卡出现不存在的 Q5）',
+    file: CARDJS,
+    from: `  const periodLabel = (i) => (i < s.config.periods ? \`Q\${i + 1}\` : \`OT\${i - s.config.periods + 1}\`);`,
+    to: `  const periodLabel = (i) => \`Q\${i + 1}\`;`,
+    suite: 'mobile', mustRedOn: '加时节列头标 OT（不是 Q5）',
+  },
 ];
 
 const runSuite = (which) => {

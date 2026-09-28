@@ -35,6 +35,7 @@ function fakeServer() {
   };
   let failNext = 0;      // 接下来 N 次 fetch 直接网络错误
   let failApplyOnce = 0; // 接下来 N 次 apply 返回 409 冲突
+  let rejectWith = null; // 接下来一次 apply 返回指定业务错误（如 game_finished 409）
   let clock = 0;
 
   const respond = (body, status = 200) => new Response(JSON.stringify(body), {
@@ -51,6 +52,7 @@ function fakeServer() {
     if (url.searchParams.get('action') === 'get') {
       return respond({ code: 'AB23', status: state.status, version: state.version, state, serverTime });
     }
+    if (rejectWith) { const r = rejectWith; rejectWith = null; return respond({ error: r.code }, r.status); }
     if (failApplyOnce > 0) { failApplyOnce -= 1; return respond({ error: 'conflict' }, 409); }
     state.version += 1;
     const a = body?.action;
@@ -64,6 +66,7 @@ function fakeServer() {
     get state() { return state; },
     networkDown(n) { failNext = n; },
     conflictOnce() { failApplyOnce = 1; },
+    rejectWithOnce(code, status = 409) { rejectWith = { code, status }; },
     setVersion(v) { state.version = v; },
   };
 }
@@ -319,6 +322,28 @@ console.log('\n— 大屏 stale 冻结 —');
   store.lastOkAt = store.now(); // 重连恢复
   const recovered = store.displayClock();
   ok('恢复后大屏时钟回到推演真值', recovered.remainingMs < frozen.remainingMs, JSON.stringify({ frozen: frozen.remainingMs, recovered: recovered.remainingMs }));
+}
+
+// ---------- 15. 409 业务结论与版本冲突的区分 ----------
+// game_finished / reset_not_allowed 也是 409。一视同仁当冲突处理的话，
+// 比赛结束时会提示「状态已被其他操作更新，已自动刷新」——把「比分已锁定」
+// 说成「别人改了什么」，记分员会被带偏。只有 error=conflict 才是撞车。
+console.log('\n— 409 业务结论不当成冲突 —');
+{
+  mem.clear();
+  const server = fakeServer();
+  const store = new GameStore('AB23');
+  await store.apply({ type: 'score', team: 0, points: 2 });
+  const before = server.calls.length;
+  server.rejectWithOnce('game_finished', 409);
+  const res = await store.apply({ type: 'score', team: 1, points: 2 });
+  ok('game_finished(409) 不当成冲突（透传「比赛已结束」原话）',
+    res.conflict === undefined && res.error?.code === 'game_finished', JSON.stringify(res));
+  ok('业务结论不触发额外刷新（没有多打一次 get）', server.calls.length === before + 1,
+    `calls ${before} → ${server.calls.length}`);
+  server.conflictOnce();
+  const c = await store.apply({ type: 'score', team: 0, points: 1 });
+  ok('真正的版本冲突仍按冲突处理并自动刷新', c.conflict === true, JSON.stringify(c));
 }
 
 console.log(`\n通过 ${pass} / 失败 ${fail}`);

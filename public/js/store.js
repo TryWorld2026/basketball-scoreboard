@@ -165,7 +165,11 @@ export class GameStore {
       this.emit();
       return { queued: true };
     }
-    if (res.error?.code === 'conflict' || res.error?.status === 409) { await this._tick(); return { conflict: true, error: res.error }; }
+    // 只有「版本撞车」才算冲突（重读重放后仍失败）。game_finished / reset_not_allowed
+    // 也是 409，但那是业务结论，必须把它自己的话术透给记分员——以前一视同仁当冲突
+    // 处理，比赛结束时会提示「状态已被其他操作更新」，把「比分已锁定」说成
+    // 「别人改了什么」，纯误导。
+    if (res.error?.code === 'conflict') { await this._tick(); return { conflict: true, error: res.error }; }
     return res;
   }
 

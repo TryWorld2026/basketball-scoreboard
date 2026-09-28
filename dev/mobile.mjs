@@ -206,5 +206,11 @@ check('换发成功后保存新令牌与新找回码',
 console.log('— replaceChildren 条件块 —');
 check('审计列表超长提示用展开三元（不是裸 &&）', /\.\.\.\(entries\.length > 12/.test(CARD), 'card.js 又是 cond && h(...) 直接传给 replaceChildren');
 
+// ---------- 11. 加时节列头：OT1/OT2，不是 Q5/Q6 ----------
+// 加时赛后每节流水会多出列。列头还按 Q{n+1} 编号的话，卡上会出现
+// 「Q5」这种不存在的节次——看卡的人以为数据记错了。
+console.log('— 加时节列头 —');
+check('加时节列头标 OT（不是 Q5）', /OT\$\{i - s\.config\.periods \+ 1\}/.test(CARD), 'card.js 加时列头还是 Q{n+1}');
+
 console.log(`通过 ${pass} / 失败 ${fail}`);
 process.exit(fail ? 1 : 0);
