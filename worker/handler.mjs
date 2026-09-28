@@ -1,7 +1,8 @@
 // 篮球计分板 HTTP 业务层 —— 与具体数据库无关，只依赖注入的 store 接口：
-//   getGame / insertGame / casUpdateGame / casUpdateGameWithReceipt / deleteStaleSetup / deleteAbandoned
+//   getGame / insertGame / casUpdateGame / casUpdateGameWithReceipt / getLog
+//   / deleteStaleSetup / deleteAbandoned
 // 浏览器同源调用 /api/game?action=get|create|apply。
-import { applyAction, emptyState, newCode, readNonce, sanitizeConfig, sanitizePlayers, sanitizeTeams } from './rules.mjs';
+import { applyAction, deriveRemaining, emptyState, newCode, readNonce, sanitizeConfig, sanitizePlayers, sanitizeTeams } from './rules.mjs';
 import { createRateLimiter, ipOf } from './ratelimit.mjs';
 
 const json = (body, status = 200, headers = {}) => Response.json(body, {
@@ -38,12 +39,15 @@ const bearer = (request) => /^Bearer ([0-9a-f]{64})$/.exec(request.headers.get('
 // 写路径持凭证：房间码只给读，控制凭证才给写。
 // 凭证签发时只明文回一次，库里只存 SHA-256；老行没有 controller_hash 一律 fail closed
 // （只读，finished 的数据卡链接不受影响）。
-async function authorize(request, storedHash) {
-  if (typeof storedHash !== 'string' || !storedHash) return false;
+// 返回「操作者指纹」= 凭证哈希前 8 位，写进审计日志：足以区分是哪台设备按的，
+// 又不会把凭证本身泄进日志（日志是公开可读的）。
+async function authorizeActor(request, storedHash) {
+  if (typeof storedHash !== 'string' || !storedHash) return null;
   const token = bearer(request);
-  if (!token) return false;
+  if (!token) return null;
   const presented = await hashCredential(token);
-  return presented ? sameHash(presented, storedHash) : false;
+  if (!presented || !sameHash(presented, storedHash)) return null;
+  return presented.slice(0, 8);
 }
 
 // 默认限流器：按 isolate 计数，只统计失败请求（房间不存在/非法参数/冲突/凭证不符）
@@ -95,6 +99,19 @@ async function handleGet(store, limiters, request, params) {
   });
 }
 
+// 操作审计读取：房间码即读能力（和 get 同级）。赛后吵架时，
+// 房间里任何人都能拉出「谁在什么时候把比分从多少改成多少」——公开才有人信。
+async function handleLog(store, limiters, request, params) {
+  const code = String(params.get('code') || '').toUpperCase();
+  if (!CODE_RE.test(code)) return throttled(limiters, request, json({ error: 'invalid_code' }, 400));
+  const row = await store.getGame(code);
+  if (row === null) return throttled(limiters, request, json({ error: 'game_not_found' }, 404));
+  if (!row || row.error) return dbError();
+  const log = await store.getLog(code);
+  if (log.error) return dbError();
+  return json({ code, version: row.version, entries: log.entries, serverTime: new Date().toISOString() });
+}
+
 async function handleCreate(store, limiters, request) {
   const gate = limiters.create.hit(ipOf(request));
   if (!gate.allowed) {
@@ -141,13 +158,14 @@ async function handleApply(store, limiters, request) {
     const row = await store.getGame(code);
     if (row === null) return throttled(limiters, request, json({ error: 'game_not_found' }, 404));
     if (!row || row.error) return dbError();
-    if (!(await authorize(request, row.controller_hash))) {
+    const actor = await authorizeActor(request, row.controller_hash);
+    if (!actor) {
       return throttled(limiters, request, json({ error: 'controller_required' }, 403));
     }
     const nowMs = Date.now();
     const result = applyAction(row.state, action, new Date(nowMs).toISOString(), nowMs);
     if (result.error) return json({ error: result.error }, result.status || 400);
-    // 无变化：不写库、不涨版本（重复上报归零、时钟没归零就发 clock_zero）
+    // 无变化：不写库、不涨版本（重复上报归零、时钟没归零就发 clock_zero）——也不写审计
     if (JSON.stringify(result.state) === JSON.stringify(row.state)) {
       return json({
         code, status: row.state.status, version: row.version,
@@ -155,12 +173,23 @@ async function handleApply(store, limiters, request) {
       });
     }
     const patch = { state: result.state, status: result.state.status, updated_at: new Date().toISOString() };
+    // 审计：每一次落地记一条（谁/何时/什么动作/比分从多少变成多少/当时时钟）。
+    // 和状态更新走同一个批处理——CAS 输了就不记，不存在「状态变了审计没记」。
+    const score = (st) => `${st.teams[0].score}:${st.teams[1].score}`;
+    const logEntry = {
+      actor,
+      action: JSON.stringify(action),
+      before_score: score(row.state),
+      after_score: score(result.state),
+      clock_ms: Math.round(deriveRemaining(result.state.clock, nowMs)),
+      at: patch.updated_at,
+    };
     // 带 nonce 的意图走「回执 + CAS」同一个批处理：回执已在 = 这个意图落地过
     // （响应丢失后的补发），按 noop 回当前状态，不二次生效、不涨版本。
     // 回执与比赛行级联删除，去重窗口不限于最近 N 条。
     const written = nonce
-      ? await store.casUpdateGameWithReceipt(code, row.version, patch, nonce)
-      : await store.casUpdateGame(code, row.version, patch);
+      ? await store.casUpdateGameWithReceipt(code, row.version, patch, nonce, logEntry)
+      : await store.casUpdateGame(code, row.version, patch, logEntry);
     if (written.error) return dbError();
     if (written.duplicate) {
       return json({
@@ -183,9 +212,11 @@ export async function handleGames({ request, store, limiters = DEFAULT_LIMITERS 
   const action = params.get('action');
   const method = request.method;
   try {
-    if (action === 'get') {
+    if (action === 'get' || action === 'log') {
       if (method !== 'GET') return json({ error: 'method_not_allowed' }, 405, { allow: 'GET' });
-      return await handleGet(store, limiters, request, params);
+      return action === 'get'
+        ? await handleGet(store, limiters, request, params)
+        : await handleLog(store, limiters, request, params);
     }
     if (action === 'create' || action === 'apply') {
       if (method !== 'POST') return json({ error: 'method_not_allowed' }, 405, { allow: 'POST' });

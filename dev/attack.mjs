@@ -507,6 +507,90 @@ console.log('\n[18] 半途放弃的局在建赛时被清理（已结束的永久
   ok('筹建超 24h 的房间照样被清', !store._rows.has('CCCC'));
 }
 
+console.log('\n[19] 操作审计：每一次落地留痕，吵架时能回溯');
+{
+  const { call, raw, apply, get, newGame, store } = fresh();
+  const { code, created } = await newGame();
+  const logOf = async () => (await call('GET', `action=log&code=${code}`)).json.entries;
+  const put = async (action) => raw(code, (await get(code)).json.version, action);
+
+  ok('初始没有任何审计记录', (await logOf()).length === 0);
+  await put({ type: 'score', team: 0, points: 2, nonce: 'audit-nonce-0001' });
+  const first = (await logOf())[0];
+  ok('得分落地后审计留痕（前后比分 + 当时时钟）',
+    !!first && first.before_score === '0:0' && first.after_score === '2:0' && typeof first.clock_ms === 'number',
+    JSON.stringify(first));
+  ok('actor 是凭证指纹（8 位十六进制，不是明文令牌）',
+    /^[0-9a-f]{8}$/.test(first?.actor) && !created.controlToken.includes(first.actor),
+    `actor=${first?.actor}`);
+  ok('审计原样保留意图（含 nonce，可和补发对账）', JSON.parse(first.action).nonce === 'audit-nonce-0001');
+
+  await put({ type: 'score', team: 0, points: 2, nonce: 'audit-nonce-0001' });
+  ok('重复补发被幂等拦下，不写第二条审计', (await logOf()).length === 1);
+  await put({ type: 'clock_zero', nonce: 'audit-zero-nonce1' });
+  ok('时钟没归零的 clock_zero 无变化，不写审计', (await logOf()).length === 1);
+
+  await apply(code, { type: 'period_next' });               // → 节间休息（这条本身也落地，记审计）
+  await apply(code, { type: 'score', team: 1, points: 3 }); // 休息期记分，被规则拒
+  ok('被规则拒绝的动作不留审计（只记真落地的）', (await logOf()).length === 2, JSON.stringify((await logOf()).length));
+
+  await apply(code, { type: 'period_next' });               // 提前结束休息
+  await apply(code, { type: 'foul', team: 1 });
+  const entries = await logOf();
+  ok('审计按落地顺序排列（最新在前）',
+    entries.length === 4 && entries[0].seq > entries[1].seq && entries[1].seq > entries[2].seq && entries[2].seq > entries[3].seq,
+    JSON.stringify(entries.map((e) => e.seq)));
+
+  await apply(code, { type: 'finish' });
+  const beforeReset = (await logOf()).length;
+  await apply(code, { type: 'reset' });
+  const afterReset = await logOf();
+  ok('reset 后旧日志仍在（终局被擦掉这件事必须可查）', afterReset.length === beforeReset + 1,
+    `${beforeReset} → ${afterReset.length}`);
+  ok('reset 本身留痕且比分回到 0:0', afterReset[0].after_score === '0:0', JSON.stringify(afterReset[0]));
+
+  ok('不存在房间的 log 请求 404（不返回空列表假装没事）', (await call('GET', 'action=log&code=ZZZZ')).status === 404);
+  ok('非法房间码的 log 请求 400', (await call('GET', 'action=log&code=0O1I')).status === 400);
+  ok('log 响应不泄漏控制凭证', !JSON.stringify(await call('GET', `action=log&code=${code}`)).includes(created.controlToken));
+  ok('log 只接受 GET（POST 405）', (await call('POST', `action=log&code=${code}`)).status === 405);
+
+  // 级联清理：比赛行没了，审计一起走——不留永驻的孤儿记录
+  const teams = sanitizeTeams([{ name: 'A', color: '#1E4FD8' }, { name: 'B', color: '#E11D2E' }]);
+  const st = emptyState(sanitizeConfig({ periods: 2 }), teams, []);
+  const old = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
+  store._rows.set('OLD1', { code: 'OLD1', status: 'setup', version: 1, state: st, created_at: old, updated_at: old });
+  store._logs.set('OLD1', [{ seq: 1, actor: 'abcd1234', action: '{"type":"score"}', before_score: '0:0', after_score: '2:0', clock_ms: 60000, at: old }]);
+  await call('POST', 'action=create', { teams, config: {} });
+  ok('半途放弃局清理时审计一起删（不留孤儿记录）', !store._logs.has('OLD1') && !store._rows.has('OLD1'));
+}
+
+console.log('\n[20] Worker 入口：安全响应头与路由（真实 fetch 形状）');
+{
+  const worker = (await import('../worker/index.js')).default;
+  // 最小 D1 桩：只走 getGame 的 404 分支；静态资源给个假 HTML
+  const db = {
+    prepare: () => ({
+      bind: () => ({
+        first: async () => null,
+        all: async () => ({ results: [] }),
+        run: async () => ({ meta: { changes: 0 } }),
+      }),
+    }),
+  };
+  const env = { DB: db, ASSETS: { fetch: async () => new Response('<div id="app">', { status: 200, headers: { 'content-type': 'text/html' } }) } };
+  const csp = (res) => res.headers.get('content-security-policy') || '';
+
+  const api = await worker.fetch(new Request('http://s/api/game?action=get&code=ZZZZ'), env);
+  ok('API 响应带 frame-ancestors none（防控制端被 iframe 诱导点击）', csp(api).includes("frame-ancestors 'none'"), csp(api) || '缺失');
+  ok('API 响应带 nosniff', api.headers.get('x-content-type-options') === 'nosniff', api.headers.get('x-content-type-options') || '缺失');
+
+  const page = await worker.fetch(new Request('http://s/room/AB23/display'), env);
+  ok('静态页响应也带安全头（大屏/控制端都不被嵌入）', csp(page).includes("frame-ancestors 'none'"), csp(page) || '缺失');
+
+  const noDb = await worker.fetch(new Request('http://s/api/game?action=get&code=AB23'), { ASSETS: env.ASSETS });
+  ok('没绑 D1 时 API 503 且同样带安全头', noDb.status === 503 && csp(noDb).includes("frame-ancestors 'none'"), `${noDb.status} ${csp(noDb)}`);
+}
+
 console.log(`\n探针结果：通过 ${pass} / 攻击命中 ${fail}`);
 if (bugs.length) { console.log('\n命中清单：'); for (const b of bugs) console.log('  - ' + b); }
 // 探针变红必须让 CI 失败——否则这张网只是控制台输出，不构成门禁

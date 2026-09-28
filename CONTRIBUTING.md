@@ -30,16 +30,16 @@ npm test
 
 CI（`.github/workflows/test.yml`）会在每次 push 和 PR 上跑七张内存/静态测试网，以及独立的 `local-d1` 真实 Worker + 本地 D1 门禁；部署走 Cloudflare Workers Builds，与本仓库的测试门禁互不相干。
 
-改动规则引擎时，优先运行 `npm run test:e2e`：它自动迁移本地 D1、启动临时 `wrangler dev`，再跑 28 项真实 SQL 链路，不需要 Cloudflare 凭据，也不碰生产。`node dev/d1-check.mjs <remoteBaseUrl>` 默认拒绝远程写探针，只有设置 `D1_CHECK_ALLOW_REMOTE=1` 才允许。
+改动规则引擎时，优先运行 `npm run test:e2e`：它自动迁移本地 D1、启动临时 `wrangler dev`，再跑 29 项真实 SQL 链路，不需要 Cloudflare 凭据，也不碰生产。`node dev/d1-check.mjs <remoteBaseUrl>` 默认拒绝远程写探针，只有设置 `D1_CHECK_ALLOW_REMOTE=1` 才允许。
 
 ## 代码结构约定
 
 | 位置 | 职责 | 约束 |
 |---|---|---|
 | `worker/rules.mjs` | 规则引擎 | **纯函数，禁止 I/O**。时钟推算与 `public/js/clock.js` 是镜像实现，改一处必须同步另一处（`dev/parity.mjs` 会比对） |
-| `worker/handler.mjs` | HTTP 与并发 | 只依赖注入的 `store` 接口，不要在这里写 SQL。限流器可注入（`limiters` 参数），测试用注入的紧凑上限，不靠默认值。**写路径（apply）必须先过 `authorize`：房间码只给读，控制凭证才给写；老行无凭证一律 fail closed** |
+| `worker/handler.mjs` | HTTP 与并发 | 只依赖注入的 `store` 接口，不要在这里写 SQL。限流器可注入（`limiters` 参数），测试用注入的紧凑上限，不靠默认值。**写路径（apply）必须先过 `authorizeActor`：房间码只给读，控制凭证才给写；老行无凭证一律 fail closed。每一次真落地还要落一条操作审计（`action_log`），和状态更新同一个批处理** |
 | `worker/ratelimit.mjs` | 限流 | 进程内计数、只统计失败请求；不得统计正常轮询（会误伤 1 秒刷新） |
-| `worker/store-d1.mjs` | 数据适配 | 换数据库只需重写这一层，保持 `getGame / insertGame / casUpdateGame / casUpdateGameWithReceipt / deleteStaleSetup / deleteAbandoned` 语义 |
+| `worker/store-d1.mjs` | 数据适配 | 换数据库只需重写这一层，保持 `getGame / insertGame / casUpdateGame / casUpdateGameWithReceipt / getLog / deleteStaleSetup / deleteAbandoned` 语义；审计写入必须和状态更新在同一个批处理里（CAS 输了就不记） |
 | `public/js/clock.js` | 前端时钟/节次判定 | `derive*` 必须是 `worker/rules.mjs` 的镜像；纯前端判定（如 `periodNextFinishes`）由 `dev/parity.mjs` 拿服务端落库结果反锁 |
 | `public/js/views/control.js` | 控制端 | 不可逆动作（结束比赛、重开、末节跳节）一律先 `confirm`；自动 `clock_zero` / `shot_reset` 靠 `zeroHandled` 去重，每个归零瞬间只发一次 |
 | `public/js/` | 前端 | 原生 ES module，不引入框架和构建步骤；DOM 一律用 `textContent` / `setAttribute`，不要 `innerHTML` 拼接 |

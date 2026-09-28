@@ -111,7 +111,7 @@
 
 ### 4.5 数据卡 `/room/:code/card`（3:4，适合群聊）
 
-终比分 + 获胜标记、每节得分流水、得分王（开启球员记录时）、三分对比、犯规对比、房间码水印。两个按钮：**保存图片**（canvas 导出 PNG）、**复制链接**。
+终比分 + 获胜标记、每节得分流水、得分王（开启球员记录时）、三分对比、犯规对比、房间码水印。两个按钮：**保存图片**（canvas 导出 PNG）、**复制链接**。PNG 下方另有**操作记录**面板：按版本变化拉取 `/api/game?action=log`，逐条列出时间/动作/前后比分/操作者指纹——赛后吵架时的核对面（读不到审计不影响数据卡本身）。
 
 ---
 
@@ -131,7 +131,7 @@ SPA 模式由 Workers Assets 的 `not_found_handling: single-page-application` �
 
 ## 6. 数据模型
 
-主表 `games` 仍是一场比赛一行、整场状态一个 JSON 文档（读-改-写 + 版本号 CAS 的模型下，规范化拆表只会增加跨请求事务问题）；`action_receipts` 是与比赛行级联的幂等回执辅表：
+主表 `games` 仍是一场比赛一行、整场状态一个 JSON 文档（读-改-写 + 版本号 CAS 的模型下，规范化拆表只会增加跨请求事务问题）；`action_receipts` 是与比赛行级联的幂等回执辅表，`action_log` 是与比赛行级联的操作审计辅表：
 
 ```sql
 create table games (
@@ -153,6 +153,22 @@ create table action_receipts (
   created_at  text not null,
   receipt_id  text unique,                 -- migrations/0003：本次 INSERT 的 attempt marker；老回执可为 NULL
   primary key (code, nonce)
+);
+
+-- 操作审计（migrations/0004）：每一次落地写一条——谁（凭证指纹，不明文）/何时/
+-- 什么动作/比分从多少改成多少/当时时钟。与状态更新同一个批处理：CAS 输了就不记。
+-- reset 重开不清日志（终局被擦掉这件事必须可查）；随比赛行级联删除。
+-- 只记真落地：被规则拒的、幂等拦下的、无变化的动作都不留痕。
+create table action_log (
+  code        text not null references games(code) on delete cascade,
+  seq         integer not null,            -- 落地后的 version，天然时间序
+  actor       text not null,               -- 控制凭证 SHA-256 前 8 位（区分设备，不泄露凭证）
+  action      text not null,               -- 意图 JSON 原样（含 nonce，可和补发对账）
+  before_score text not null,              -- "24:22"
+  after_score  text not null,
+  clock_ms    integer not null,            -- 动作时刻的比赛时钟剩余（屏幕显示值）
+  at          text not null,
+  primary key (code, seq)
 );
 ```
 
@@ -191,6 +207,7 @@ create table action_receipts (
   │                                 0行受影响 → 重读重放（≤3次）→ 仍冲突返回409
   │ ◀─ 新 state+version ────────────┘
   │ GET get&code ─▶ {state, version, serverTime}   （两端各自每秒轮询）
+   │ GET log&code ─▶ {entries}                      （赛后核对，按版本变化拉）
 ```
 
 - **意图白名单**：`score{team,points,playerId?}`、`foul{team}`、`timeout{team}`、`clock_start/stop`、`shot_reset`、`possession{team}`、`period_next`、`clock_zero`（归零自动进节）、`undo`、`finish`、`reset`。未知动作 400。所有意图带客户端生成的 `nonce`。
@@ -203,6 +220,8 @@ create table action_receipts (
 - **幂等键（对抗审查补，2026-09-28 加固）**：户外丢包时客户端会补发同一意图，服务端按 `nonce` 去重——回执落 `action_receipts` 表，与状态写入同一个批处理；`receipt_id` 证明 UPDATE 使用的是**本次 INSERT** 的回执，旧回执不能满足 UPDATE。重复意图只记一次且不涨版本。去重窗口不限长度：旧实现把 nonce 塞进比赛 JSON 只留最近 30 条，双记分员场景下超过 30 次后续写入，补发就被挤出窗口、同一意图记两次分。没有这一条，一次信号抖动就能凭空多算 2 分。
 - **模式门禁（对抗审查补）**：记分/记犯规只在 `clock.mode==='game'` 时接受——休息期按 +3 会静默记进下一节的流水，属于数据污染；叫暂停还要求 `status==='live'`，否则未开打就能烧掉一次暂停。
 - **无变化不写库**：应用后状态与之前等价（如重复上报归零）直接返回当前状态，不涨版本，避免多端同时上报造成无意义 CAS 冲突。
+- **操作审计（对抗审查补，2026-09-28 加固）**：每一次落地写一条 `action_log`——谁（控制凭证 SHA-256 前 8 位，不明文）/何时/什么动作/比分从多少改成多少/当时时钟。和状态更新走同一个批处理，CAS 输了就不记，不存在"状态变了审计没记"。`action=log` 与读比分同级（房间码即读）：班里任何人拿到码都能核对记录，公开才有人信——这是它防"打完吵架"的方式。只记真落地：被规则拒的、幂等拦下的、无变化的动作都不留痕；`reset` 重开不清旧日志。赛后数据卡页有「操作记录」面板按版本变化拉取。
+- **入口安全响应头（对抗审查补，2026-09-28 加固）**：控制端可被 iframe 嵌入做 UI redressing（诱骗记分员点 +3）。Worker 入口对所有响应（API 与静态）统一加 `frame-ancestors 'none'` + `nosniff`——这个应用没有任何被合法嵌入的场景。快捷键另外过滤 Ctrl/Meta/Alt，避免系统快捷键被当成记分动作。
 - **休息中按"下一节"= 提前结束休息**（班赛休息期常提前开打），不再报错。
 - **服务端规则引擎**：得分→队/球员分数+节流水+三分计数+进攻箭头转向；犯规→满 `foulLimit` 置 BONUS；`clock_zero`→进节间休息（新一节犯规清零）；末节平局→自动加时，**末节分出胜负必须结束**（不得无限加时）；`finish`→锁定、算 winner（平局为 null，不误判主队）。
 - **严格整数**：`team`/`points` 只接受真正的整数，拒绝 `null`/`"2"`——`Number(null)===0` 会把脏输入静默变成"主队加 0 号位"。
@@ -233,8 +252,8 @@ create table action_receipts (
 **部署平台变更记录（2026-09-24）**：首版按 Qoder Sites（静态 + Edge Function + Supabase 适配器）实现并本地验证通过，但平台侧建站请求持续返回通用失败，云资源无法分配；同日改投 **Cloudflare Workers + D1** 并完成部署与线上验证。规则引擎与前端一行未动，只替换了数据访问层——这验证了当初"handler 只依赖注入的 store 接口"的分层是对的。
 
 - **前端**：纯静态 SPA（原生 ES modules，无框架无构建），目录 `public/`，由 Workers Assets 托管，SPA 回退用 `not_found_handling: single-page-application`。
-- **服务端**：`worker/index.js` 为 Workers 入口，`/api/*` 走业务 handler，其余交给静态资源绑定。业务层 `worker/handler.mjs` 只依赖 store 接口（`getGame / insertGame / casUpdateGame / casUpdateGameWithReceipt / deleteStaleSetup / deleteAbandoned`）。
-- **数据库**：Cloudflare D1（SQLite）。整场状态一个 JSON 文本列 + `version` 列；幂等回执在 `action_receipts` 辅表；并发写用 `UPDATE ... WHERE code = ? AND version = ?` 的**影响行数**判定 CAS，这是真实 SQL 语义，不是内存假库的模拟。
+- **服务端**：`worker/index.js` 为 Workers 入口，`/api/*` 走业务 handler，其余交给静态资源绑定；入口统一加安全响应头（`frame-ancestors 'none'` + `nosniff`）。业务层 `worker/handler.mjs` 只依赖 store 接口（`getGame / insertGame / casUpdateGame / casUpdateGameWithReceipt / getLog / deleteStaleSetup / deleteAbandoned`）。
+- **数据库**：Cloudflare D1（SQLite）。整场状态一个 JSON 文本列 + `version` 列；幂等回执在 `action_receipts` 辅表；操作审计在 `action_log` 辅表（与状态更新同一个批处理）；并发写用 `UPDATE ... WHERE code = ? AND version = ?` 的**影响行数**判定 CAS，这是真实 SQL 语义，不是内存假库的模拟。
 - **客户端能力**：WakeLock、navigator.vibrate、WebAudio 合成蜂鸣（归零长鸣/进节双响/暂停短促）、canvas 导出 PNG。
 - **本地开发**：`npm run test:e2e` 自动应用本地迁移、启动 `wrangler dev`，用真实 HTTP + 本地 D1 跑 `dev/d1-check.mjs`；`npm test` 七张网跑内存假库/静态源码，零云依赖。
 
@@ -249,11 +268,11 @@ create table action_receipts (
 7. 结束 → 数据卡数字与过程一致 → 存 PNG 成功 —— 实测通过（1080×1440 / 168KB）
 8. 断网操作排队、恢复补发不丢分且不重复计分 —— 幂等键实测（请求体带 nonce）
 9. 错误房间码 → 友好提示 —— 实测通过
-10. 本地真实请求验证 —— **已完成**：`npm run test:e2e` 对本地 Wrangler + D1 28/28 通过（含真 SQL CAS、durable receipt 迟到补发、并发双写、SPA 深链、no-store、匿名读写边界）；远程 `d1-check` 默认拒绝，需显式设置 `D1_CHECK_ALLOW_REMOTE=1`。
+10. 本地真实请求验证 —— **已完成**：`npm run test:e2e` 对本地 Wrangler + D1 29/29 通过（含真 SQL CAS、durable receipt 迟到补发、并发双写、SPA 深链、no-store、匿名读写边界、操作审计落库）；远程 `d1-check` 默认拒绝，需显式设置 `D1_CHECK_ALLOW_REMOTE=1`。
 
-**测试网（本地，`npm test` 七张）**：`node dev/smoke.mjs` 34 项主流程；`node dev/attack.mjs` 102 项对抗探针（幂等、并发、跳节滥用、类型强制、不可逆性、无界增长、注入面、协议健壮性、胜负判定、控制凭证对抗面、幂等窗口硬边界）；`dev/store.mjs` 39 项前端仓库层（含离线队列边界、凭证只上写路径、大屏 stale 冻结）；`dev/parity.mjs` 49 项双端时钟镜像一致性；`dev/mobile.mjs` 31 项移动端静态断言；`dev/display.mjs` 16 项大屏状态判定与接线；`dev/mutate.mjs` 35 个变异体全部被击杀（证明每条断言都不是空断言）。
+**测试网（本地，`npm test` 七张）**：`node dev/smoke.mjs` 34 项主流程；`node dev/attack.mjs` 121 项对抗探针（幂等、并发、跳节滥用、类型强制、不可逆性、无界增长、注入面、协议健壮性、胜负判定、控制凭证对抗面、幂等窗口硬边界、操作审计全链路、Worker 入口安全响应头）；`dev/store.mjs` 39 项前端仓库层（含离线队列边界、凭证只上写路径、大屏 stale 冻结）；`dev/parity.mjs` 49 项双端时钟镜像一致性；`dev/mobile.mjs` 36 项移动端静态断言（含赛后操作记录接线、快捷键修饰键过滤）；`dev/display.mjs` 16 项大屏状态判定与接线；`dev/mutate.mjs` 40 个变异体全部被击杀（证明每条断言都不是空断言）。
 
-**对抗审查净新增的修复**：幂等键缺失（响应丢失补发会双计）、幂等窗口只有 30 条（补发被挤出后双计，已改 durable receipts）、带 nonce 的无变化动作白涨版本、断网队列可吞撤销/终局（迟到的撤销吃掉队友操作，已改为只有事实类动作可排队）、队列静默截断（重开浏览器丢步，已改硬上限+明示）、休息/暂停期间记分串节、未开打可烧暂停、`Number()` 静默吞脏输入、无变化写库涨版本造成冲突风暴、休息中无法提前开打、控制端不显示剩余暂停、乱序轮询响应覆盖新快照、`reset` 不限终局（进行中可擦库）、房间码即可写比分（已改为控制凭证隔离）。
+**对抗审查净新增的修复**：幂等键缺失（响应丢失补发会双计）、幂等窗口只有 30 条（补发被挤出后双计，已改 durable receipts）、带 nonce 的无变化动作白涨版本、断网队列可吞撤销/终局（迟到的撤销吃掉队友操作，已改为只有事实类动作可排队）、队列静默截断（重开浏览器丢步，已改硬上限+明示）、休息/暂停期间记分串节、未开打可烧暂停、`Number()` 静默吞脏输入、无变化写库涨版本造成冲突风暴、休息中无法提前开打、控制端不显示剩余暂停、乱序轮询响应覆盖新快照、`reset` 不限终局（进行中可擦库）、房间码即可写比分（已改为控制凭证隔离）、**落地不留痕（打完吵架无从对账，已加操作审计：谁/何时/从几分改成几分，与状态更新同一个批处理，reset 不清旧日志）、控制端可被 iframe 诱导点击（已加 `frame-ancestors 'none'`）、系统快捷键误记分（已过滤 Ctrl/Meta/Alt）**。
 
 ## 11. 实现里程碑
 

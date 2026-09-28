@@ -303,6 +303,9 @@ export default {
     // ---- 键盘快捷键（笔记本当控制端） ----
     const onKey = (e) => {
       if (e.target.matches('input,textarea,select')) return;
+      // Ctrl+A / ⌘+S / Alt+… 是系统快捷键，不是记分动作——不滤的话
+      // 记分员在笔记本上全选文本都能给主队加一分
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
       const s = store.state;
       if (!s || store.status === 'finished') return;
       const map = { a: [0, 1], s: [0, 2], d: [0, 3], j: [1, 1], k: [1, 2], l: [1, 3] };

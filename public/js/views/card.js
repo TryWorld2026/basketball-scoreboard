@@ -1,5 +1,6 @@
 // 赛后数据卡：canvas 直绘，所见即所存（1080×1440，适合发班群）。
 import { GameStore } from '../store.js';
+import { api } from '../api.js';
 import { h } from '../ui.js';
 
 const W = 1080, H = 1440, M = 72;
@@ -302,7 +303,51 @@ export default {
         catch { e.target.textContent = '复制失败'; }
       },
     }, '复制链接');
-    const panel = h('div', { class: 'card-wrap' }, canvas, h('div', { class: 'btn-row' }, saveBtn, copyBtn));
+
+    // ---------- 操作记录：赛后吵架时的核对面板 ----------
+    // 数据来自 /api/game?action=log（公开读，和比分同级）：
+    // 每一次落地都记了谁（凭证指纹）/何时/什么动作/比分从多少变成多少。
+    // 只在新版本到达时拉一次，不跟着 3 秒轮询反复请求。
+    const logBox = h('div', { class: 'card-log', hidden: true });
+    let logVersion = -1;
+    const logLabel = (entry) => {
+      let a = {};
+      try { a = JSON.parse(entry.action); } catch { /* 老记录按原样展示 */ }
+      const s = store.state;
+      const tn = (i) => s?.teams?.[i]?.name || (i === 0 ? '主队' : '客队');
+      switch (a.type) {
+        case 'score': return `${tn(a.team)} +${a.points}${a.playerId ? `（${a.playerId}）` : ''}`;
+        case 'foul': return `${tn(a.team)} 犯规 +1`;
+        case 'timeout': return `${tn(a.team)} 暂停`;
+        case 'possession': return `球权 → ${tn(a.team)}`;
+        case 'clock_start': return '开始计时';
+        case 'clock_stop': return '停表';
+        case 'shot_reset': return '24 秒归满';
+        case 'clock_zero': return '时钟归零上报';
+        case 'period_next': return '下一节';
+        case 'finish': return '结束比赛';
+        case 'reset': return '重开一场';
+        case 'undo': return '撤销';
+        default: return a.type || '未知动作';
+      }
+    };
+    const paintLog = (entries) => {
+      if (!entries.length) { logBox.hidden = true; return; }
+      logBox.hidden = false;
+      logBox.replaceChildren(
+        h('h3', { class: 'card-log-title' }, '操作记录 · 可核对'),
+        ...entries.slice(0, 12).map((e) => h('p', { class: 'card-log-item' },
+          h('span', { class: 'log-time' }, new Date(e.at).toLocaleTimeString('zh-CN', { hour12: false })),
+          h('span', { class: 'log-act' }, logLabel(e)),
+          h('span', { class: 'log-score' }, `${e.before_score} → ${e.after_score}`),
+          h('span', { class: 'log-actor' }, e.actor))),
+        entries.length > 12 && h('p', { class: 'muted small' }, `……还有 ${entries.length - 12} 条，完整记录以服务端为准`));
+    };
+    const loadLog = async () => {
+      try { paintLog((await api(`/api/game?action=log&code=${encodeURIComponent(code)}`)).entries || []); }
+      catch { logBox.hidden = true; } // 读不到审计不影响数据卡本身
+    };
+    const panel = h('div', { class: 'card-wrap' }, canvas, h('div', { class: 'btn-row' }, saveBtn, copyBtn), logBox);
 
     root.append(
       h('header', { class: 'brand' }, h('a', { href: `/room/${code}`, 'data-link': true, class: 'back' }, '← 房间'), h('h1', null, '赛后数据卡')),
@@ -332,6 +377,7 @@ export default {
         dateLabel: new Date(s.finishedAt || s.startedAt || Date.now()).toLocaleDateString('zh-CN'),
       });
       prepShare(s);
+      if (s.version !== logVersion) { logVersion = s.version; loadLog(); }
     };
     const un = store.subscribe(render);
     store.start(3000);

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 const R = (f) => fileURLToPath(new URL(f, import.meta.url));
 const CSS = readFileSync(R('../public/styles.css'), 'utf8');
 const CARD_RAW = readFileSync(R('../public/js/views/card.js'), 'utf8');
+const CONTROL_RAW = readFileSync(R('../public/js/views/control.js'), 'utf8');
 const INDEX = readFileSync(R('../public/index.html'), 'utf8');
 
 // 剥掉注释再断言。card.js 里有一句「必须走 navigator.share({ files })」的注释，
@@ -17,6 +18,7 @@ const stripJs = (s) => s
   .replace(/\/\*[\s\S]*?\*\//g, ' ')
   .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
 const CARD = stripJs(CARD_RAW);
+const CONTROL = stripJs(CONTROL_RAW);
 
 let pass = 0; let fail = 0;
 const check = (name, cond, extra = '') => {
@@ -165,6 +167,22 @@ check('先用 navigator.canShare 探测再决定走哪条路', /navigator\.canSh
 check('提前把 File 备好（share 必须同步发生在用户手势里）', /new File\(\[blob\]/.test(CARD));
 check('桌面端保留 <a download> 兜底', /a\.download\s*=/.test(CARD));
 check('用户取消分享不算错误（不吞 AbortError 做假提示）', /\.catch\(\(\)\s*=>\s*\{[^}]*\}\)/.test(CARD));
+
+// ---------- 7. 赛后操作记录接线 ----------
+// 审计的源头在服务端（attack [19] 锁行为），这里锁「数据卡页真的去读、真的渲染、
+// 按版本变化才拉」——服务端记了却没人看的审计，防不了吵架。
+console.log('— 赛后操作记录接线 —');
+check('数据卡页请求 action=log 并带上房间码', /action=log&code=\$\{encodeURIComponent\(code\)\}/.test(CARD), 'card.js 没有按房间码请求 action=log');
+check('渲染四条审计字段（时间/动作/前后比分/操作者指纹）',
+  /log-time/.test(CARD) && /log-act/.test(CARD) && /log-score/.test(CARD) && /log-actor/.test(CARD));
+check('按版本变化才拉审计（不跟着 3 秒轮询反复请求）', /version !== logVersion/.test(CARD));
+check('读不到审计不影响数据卡本身（静默降级）', /catch \{ logBox\.hidden = true; \}/.test(CARD));
+
+// ---------- 8. 笔记本当遥控器：系统快捷键不误记分 ----------
+// Ctrl+A / ⌘+S 是系统快捷键。不过滤修饰键的话，
+// 记分员在笔记本上全选文本都能给主队加一分。
+console.log('— 快捷键修饰键 —');
+check('Ctrl/Meta/Alt 组合键不当记分动作', /ctrlKey \|\| e\.metaKey \|\| e\.altKey/.test(CONTROL), 'control.js 不过滤修饰键');
 
 console.log(`通过 ${pass} / 失败 ${fail}`);
 process.exit(fail ? 1 : 0);

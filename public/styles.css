@@ -317,6 +317,15 @@ select.inp { appearance: none; }
 .card-wrap { max-width: 560px; margin: 0 auto; padding: 1rem 1rem 3rem; }
 .card-canvas { width: 100%; height: auto; display: block; border-radius: 18px; box-shadow: 0 20px 60px rgba(0, 0, 0, .55); margin-top: 1rem; }
 
+/* 操作记录：赛后核对用。等宽数字 + 固定列位，扫一眼就能对上一笔笔改动 */
+.card-log { margin-top: 1.2rem; padding: .9rem 1rem; background: var(--card, #151D33); border: 1px solid var(--line); border-radius: 14px; }
+.card-log-title { margin: 0 0 .6rem; font-size: .95rem; font-weight: 800; color: var(--ink); }
+.card-log-item { display: flex; align-items: baseline; gap: .55rem; margin: 0 0 .35rem; font-size: .85rem; line-height: 1.7; }
+.card-log-item .log-time { color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
+.card-log-item .log-act { color: var(--ink); flex: 1 1 auto; }
+.card-log-item .log-score { color: var(--amber); font-variant-numeric: tabular-nums; flex: none; }
+.card-log-item .log-actor { color: var(--muted); font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: .78rem; flex: none; }
+
 /* ---------- 响应式 ---------- */
 @media (max-width: 860px) {
   .home { grid-template-columns: 1fr; }

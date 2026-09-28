@@ -18,9 +18,9 @@ const mutants = [
     name: 'M1 写路径绕过 durable receipts（幂等退回无去重）',
     file: HANDLER,
     from: `    const written = nonce
-      ? await store.casUpdateGameWithReceipt(code, row.version, patch, nonce)
-      : await store.casUpdateGame(code, row.version, patch);`,
-    to: `    const written = await store.casUpdateGame(code, row.version, patch);`,
+      ? await store.casUpdateGameWithReceipt(code, row.version, patch, nonce, logEntry)
+      : await store.casUpdateGame(code, row.version, patch, logEntry);`,
+    to: `    const written = await store.casUpdateGame(code, row.version, patch, logEntry);`,
     suite: 'attack', mustRedOn: '补发窗口超过 30 次后续写入后仍只计一次',
   },
   {
@@ -108,14 +108,15 @@ const mutants = [
   {
     name: 'M29 写路径凭证校验被移除（房间码又能直接改比分）',
     file: HANDLER,
-    from: `async function authorize(request, storedHash) {
-  if (typeof storedHash !== 'string' || !storedHash) return false;
+    from: `async function authorizeActor(request, storedHash) {
+  if (typeof storedHash !== 'string' || !storedHash) return null;
   const token = bearer(request);
-  if (!token) return false;
+  if (!token) return null;
   const presented = await hashCredential(token);
-  return presented ? sameHash(presented, storedHash) : false;
+  if (!presented || !sameHash(presented, storedHash)) return null;
+  return presented.slice(0, 8);
 }`,
-    to: `async function authorize() { return true; /* MUTANT: 凭证校验删除 */ }`,
+    to: `async function authorizeActor() { return 'abcd1234'; /* MUTANT: 凭证校验删除 */ }`,
     suite: 'attack', mustRedOn: '房间码只读不能直接写入',
   },
   {
@@ -296,6 +297,41 @@ const mutants = [
     from: `  if (store.fatal) return 'error';`,
     to: `  /* MUTANT: 错误态判定删除 */`,
     suite: 'display', mustRedOn: '房间不存在 → error（不假装等待开赛）',
+  },
+  {
+    name: 'M36 审计写入被移除（落地不留痕，吵架无从核对）',
+    file: HANDLER,
+    from: `      ? await store.casUpdateGameWithReceipt(code, row.version, patch, nonce, logEntry)`,
+    to: `      ? await store.casUpdateGameWithReceipt(code, row.version, patch, nonce)`,
+    suite: 'attack', mustRedOn: '得分落地后审计留痕',
+  },
+  {
+    name: 'M37 审计把控制凭证明文写进日志（日志是公开读的，等于把遥控器送人）',
+    file: HANDLER,
+    from: `  return presented.slice(0, 8);`,
+    to: `  return presented;`,
+    suite: 'attack', mustRedOn: 'actor 是凭证指纹（8 位十六进制，不是明文令牌）',
+  },
+  {
+    name: 'M38 放弃局清理不再级联删除审计（孤儿记录永驻库里）',
+    file: FAKESTORE,
+    from: `        if (row.status === 'setup' && row.created_at < beforeIso) { rows.delete(code); logs.delete(code); }`,
+    to: `        if (row.status === 'setup' && row.created_at < beforeIso) { rows.delete(code); }`,
+    suite: 'attack', mustRedOn: '半途放弃局清理时审计一起删（不留孤儿记录）',
+  },
+  {
+    name: 'M39 数据卡页不再拉取操作记录（服务端记了没人看，防不了吵架）',
+    file: CARDJS,
+    from: `      if (s.version !== logVersion) { logVersion = s.version; loadLog(); }`,
+    to: `      /* MUTANT: 审计拉取调用删除 */`,
+    suite: 'mobile', mustRedOn: '按版本变化才拉审计（不跟着 3 秒轮询反复请求）',
+  },
+  {
+    name: 'M40 审计请求不带房间码（面板拉到别人的记录或永远空着）',
+    file: CARDJS,
+    from: 'api(`/api/game?action=log&code=${encodeURIComponent(code)}`)',
+    to: 'api(`/api/game?action=log`)',
+    suite: 'mobile', mustRedOn: '数据卡页请求 action=log 并带上房间码',
   },
 ];
 
