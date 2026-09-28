@@ -1,5 +1,5 @@
 // 房间页：大号房间码 + 二维码 + 两端入口。
-import { GameStore, controlLinkSuffix } from '../store.js';
+import { GameStore, controlLinkSuffix, recoveryCodeOf } from '../store.js';
 import { navigate } from '../router.js';
 import { h } from '../ui.js';
 
@@ -38,6 +38,7 @@ export default {
       // 遥控器入口带上凭证 fragment：同设备走 localStorage 也认，换标签页/换人分享时靠它
       const controlUrl = `${location.origin}/room/${code}/control${controlLinkSuffix(code)}`;
       const hasCred = controlUrl.includes('#t=');
+      const recovery = recoveryCodeOf(code);
       body.replaceChildren(
         h('section', { class: 'panel center' },
           h('p', { class: 'muted' }, '房间码'),
@@ -65,6 +66,18 @@ export default {
               catch { e.target.textContent = '复制失败'; }
             },
           }, '复制控制端链接'),
+          recovery && h('div', { class: 'recovery-box' },
+            h('p', { class: 'recovery-title' }, '控制找回码'),
+            h('p', { class: 'recovery-code' }, recovery),
+            h('div', { class: 'btn-row' },
+              h('button', {
+                class: 'ghost', type: 'button',
+                onclick: async (e) => {
+                  try { await navigator.clipboard.writeText(recovery); e.target.textContent = '已复制 ✓'; }
+                  catch { e.target.textContent = '复制失败，请手动记下'; }
+                },
+              }, '复制找回码')),
+            h('p', { class: 'muted small' }, '创建比赛的手机丢了，凭它 + 房间码换回控制权。只存在这台设备上没用——请截图或发到自己微信；换发后它会自动换新。')),
           !hasCred && h('p', { class: 'cred-hint' }, '此设备没有控制凭证：大屏与数据卡照常打开，改比分请用创建比赛的手机，或让它复制「控制端链接」'),
           store.status !== 'setup' && h('a', { class: 'status-link', href: `/room/${code}/control`, 'data-link': true },
             store.status === 'finished' ? '比赛已结束 → 查看数据卡' : '比赛进行中 → 回到控制端')));

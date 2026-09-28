@@ -16,7 +16,7 @@ export function createD1Store(db) {
   return {
     async getGame(code) {
       const row = await db
-          .prepare('SELECT code, status, version, state, created_at, updated_at, controller_hash FROM games WHERE code = ?')
+          .prepare('SELECT code, status, version, state, created_at, updated_at, controller_hash, recovery_hash FROM games WHERE code = ?')
         .bind(code)
         .first();
       if (!row) return null;
@@ -30,8 +30,8 @@ export function createD1Store(db) {
     async insertGame(game) {
       try {
         await db
-          .prepare('INSERT INTO games (code, status, version, state, created_at, updated_at, controller_hash) VALUES (?, ?, ?, ?, ?, ?, ?)')
-          .bind(game.code, game.status, game.version, JSON.stringify(game.state), game.created_at, game.updated_at, game.controller_hash)
+          .prepare('INSERT INTO games (code, status, version, state, created_at, updated_at, controller_hash, recovery_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+          .bind(game.code, game.status, game.version, JSON.stringify(game.state), game.created_at, game.updated_at, game.controller_hash, game.recovery_hash ?? null)
           .run();
       } catch (e) {
         const msg = `${e?.message || ''} ${e?.cause?.message || ''}`;
@@ -111,6 +111,25 @@ export function createD1Store(db) {
         return { error: 'db' };
       }
       return { entries: (result?.results || []).map((r) => ({ ...r, seq: asInt(r.seq), clock_ms: asInt(r.clock_ms) })) };
+    },
+
+    // 控制权补发：换 controller_hash + 轮换 recovery_hash，版本 +1（补发本身是一次写入，
+    // 审计要能落；状态不变，各端看到的比分/时钟毫无变化）。CAS 防并发补发互相覆盖。
+    async reissueController(code, expectedVersion, patch, logEntry = null) {
+      let results;
+      try {
+        const stmts = [
+          db.prepare('UPDATE games SET controller_hash = ?, recovery_hash = ?, version = ?, updated_at = ? WHERE code = ? AND version = ?')
+            .bind(patch.controller_hash, patch.recovery_hash, expectedVersion + 1, patch.updated_at, code, expectedVersion),
+        ];
+        if (logEntry) stmts.push(logInsert(db, code, expectedVersion + 1, logEntry));
+        results = await db.batch(stmts);
+      } catch {
+        return { error: 'db' };
+      }
+      const changed = asInt(results?.[0]?.meta?.changes ?? 0);
+      if (changed > 1) return { error: 'db' };
+      return { changed: changed === 1, version: expectedVersion + 1 };
     },
 
     // 到点推进用：只捞状态列是 live 的行——运行中的时钟必然 live

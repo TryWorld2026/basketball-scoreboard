@@ -22,6 +22,16 @@ export function rememberControlToken(code, token) {
 export function controlTokenOf(code) {
   try { return localStorage.getItem(TOKEN_KEY(code)); } catch { return null; }
 }
+// 找回码同理：只在 create/recover 响应里明文出现一次。它救的是「创建比赛的手机丢了」
+// ——所以只存在这台设备上没用，用户必须主动把它带出去（截图/发微信）。
+// 房间页据此显示「复制找回码」，并在文案里说清这一点。
+const RECOVERY_KEY = (code) => `bs-recovery:${code}`;
+export function rememberRecoveryCode(code, recovery) {
+  try { if (recovery) localStorage.setItem(RECOVERY_KEY(code), recovery); } catch { /* 隐私模式 */ }
+}
+export function recoveryCodeOf(code) {
+  try { return localStorage.getItem(RECOVERY_KEY(code)); } catch { return null; }
+}
 // 「复制控制端链接」用：fragment 不进服务端日志与轮询，只在用户主动分享时出现。
 export const controlLinkSuffix = (code) => {
   const t = controlTokenOf(code);

@@ -56,6 +56,18 @@ export function createFakeStore(seed = []) {
       return { entries: structuredClone(entries) };
     },
 
+    // 控制权补发：与 D1 适配器同语义（换凭证 + 轮换找回码 + 版本 +1，状态不变）
+    async reissueController(code, expectedVersion, patch, logEntry = null) {
+      const row = rows.get(code);
+      if (!row || row.version !== expectedVersion) return { changed: false, version: expectedVersion + 1 };
+      row.controller_hash = patch.controller_hash;
+      row.recovery_hash = patch.recovery_hash;
+      row.version = expectedVersion + 1;
+      row.updated_at = patch.updated_at;
+      if (logEntry) pushLog(code, expectedVersion + 1, logEntry);
+      return { changed: true, version: row.version };
+    },
+
     // 到点推进用：和 D1 适配器同语义——只捞状态列是 live 的行
     async listLiveGames() {
       const games = [];

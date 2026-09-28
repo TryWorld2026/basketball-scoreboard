@@ -313,6 +313,20 @@ select.inp { appearance: none; }
 .d-wait[hidden] { display: none; }
 .d-wait-code { font: 900 clamp(3rem, 12vw, 9rem)/1 ui-monospace, monospace; letter-spacing: .25em; margin: 0; color: var(--led-on); text-shadow: 0 0 40px var(--led-glow); }
 
+/* ---------- 房间页：控制找回码 ---------- */
+/* 找回码救的是「创建比赛的手机丢了」。只存在这台设备上等于没救——
+   必须能一键复制出去（截图/发微信），所以单独一块，不用行内小字。 */
+.recovery-box {
+  margin: .8rem 0 0; padding: .8rem 1rem; text-align: left;
+  background: rgba(245, 158, 11, .08); border: 1px dashed rgba(245, 158, 11, .45);
+  border-radius: 12px;
+}
+.recovery-box .recovery-title { margin: 0 0 .3rem; font-size: .85rem; font-weight: 800; color: var(--amber); }
+.recovery-box .recovery-code {
+  margin: 0 0 .5rem; font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 1.5rem; font-weight: 800; letter-spacing: .12em; color: var(--ink);
+}
+
 /* ---------- 数据卡 ---------- */
 .card-wrap { max-width: 560px; margin: 0 auto; padding: 1rem 1rem 3rem; }
 .card-canvas { width: 100%; height: auto; display: block; border-radius: 18px; box-shadow: 0 20px 60px rgba(0, 0, 0, .55); margin-top: 1rem; }

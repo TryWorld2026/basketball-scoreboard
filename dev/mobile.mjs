@@ -9,6 +9,8 @@ const R = (f) => fileURLToPath(new URL(f, import.meta.url));
 const CSS = readFileSync(R('../public/styles.css'), 'utf8');
 const CARD_RAW = readFileSync(R('../public/js/views/card.js'), 'utf8');
 const CONTROL_RAW = readFileSync(R('../public/js/views/control.js'), 'utf8');
+const ROOM_RAW = readFileSync(R('../public/js/views/room.js'), 'utf8');
+const HOME_RAW = readFileSync(R('../public/js/views/home.js'), 'utf8');
 const INDEX = readFileSync(R('../public/index.html'), 'utf8');
 
 // 剥掉注释再断言。card.js 里有一句「必须走 navigator.share({ files })」的注释，
@@ -19,6 +21,8 @@ const stripJs = (s) => s
   .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
 const CARD = stripJs(CARD_RAW);
 const CONTROL = stripJs(CONTROL_RAW);
+const ROOM = stripJs(ROOM_RAW);
+const HOME = stripJs(HOME_RAW);
 
 let pass = 0; let fail = 0;
 const check = (name, cond, extra = '') => {
@@ -183,6 +187,16 @@ check('读不到审计不影响数据卡本身（静默降级）', /catch \{ log
 // 记分员在笔记本上全选文本都能给主队加一分。
 console.log('— 快捷键修饰键 —');
 check('Ctrl/Meta/Alt 组合键不当记分动作', /ctrlKey \|\| e\.metaKey \|\| e\.altKey/.test(CONTROL), 'control.js 不过滤修饰键');
+
+// ---------- 9. 控制权补发接线 ----------
+// 找回码救的是「创建比赛的那台手机丢了」。服务端行为由 attack [22] 锁，
+// 这里锁两台设备上的接线：房间页能把它复制带走，首页能凭它换发控制权。
+console.log('— 控制权补发接线 —');
+check('房间页展示并支持复制找回码', /recoveryCodeOf\(code\)/.test(ROOM) && /复制找回码/.test(ROOM), 'room.js 没有找回码区块');
+check('房间页说清「只存在这台设备上没用，要带走」', /截图或发到自己微信/.test(ROOM));
+check('首页提供找回码换发表单', /action=recover/.test(HOME) && /换发控制权/.test(HOME), 'home.js 没有换发入口');
+check('换发成功后保存新令牌与新找回码',
+  /rememberControlToken\(res\.code, res\.controlToken\)/.test(HOME) && /rememberRecoveryCode\(res\.code, res\.recoveryCode\)/.test(HOME));
 
 console.log(`通过 ${pass} / 失败 ${fail}`);
 process.exit(fail ? 1 : 0);

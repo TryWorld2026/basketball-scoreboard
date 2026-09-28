@@ -24,6 +24,21 @@ async function newControllerCredential() {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
   return { token, hash: bytesToHex(digest) };
 }
+// 找回码：8 位、去易混字符（0O1I），分组 XXXX-XXXX 方便口头/截图传达。
+// 和控制令牌一样只明文回一次、库里只存 SHA-256；补发成功后立刻轮换。
+const RECOVERY_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+async function newRecoveryCredential() {
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  let code = '';
+  for (const b of bytes) code += RECOVERY_ALPHABET[b % RECOVERY_ALPHABET.length];
+  code = `${code.slice(0, 4)}-${code.slice(4)}`;
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(code));
+  return { code, hash: bytesToHex(digest) };
+}
+async function hashRecovery(code) {
+  if (typeof code !== 'string' || !/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$/.test(code)) return null;
+  return bytesToHex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(code)));
+}
 async function hashCredential(token) {
   if (typeof token !== 'string' || !/^[0-9a-f]{64}$/.test(token)) return null;
   return bytesToHex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token)));
@@ -163,6 +178,7 @@ async function handleCreate(store, limiters, request) {
   const players = config.trackPlayers ? sanitizePlayers(body.data.players, teams) : [];
   const state = emptyState(config, teams, players);
   const credential = await newControllerCredential();
+  const recovery = await newRecoveryCredential();
 
   // 顺带清理：筹建中但 24h 未开打的废弃房间，以及超过 7 天没有任何写入的半途放弃局
   // （尽力而为，失败不阻塞创建）
@@ -173,12 +189,55 @@ async function handleCreate(store, limiters, request) {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const code = newCode();
     const now = new Date().toISOString();
-    const inserted = await store.insertGame({ code, status: 'setup', version: 0, state, created_at: now, updated_at: now, controller_hash: credential.hash });
+    const inserted = await store.insertGame({ code, status: 'setup', version: 0, state, created_at: now, updated_at: now, controller_hash: credential.hash, recovery_hash: recovery.hash });
     if (inserted.error === 'duplicate') continue; // 房间码竞争，换码重试
     if (inserted.error) return dbError();
-    return json({ code, status: 'setup', version: 0, state, serverTime: now, controlToken: credential.token });
+    // 控制令牌与找回码都只在这一次响应里明文出现——此后只活在用户自己的设备/截图里
+    return json({ code, status: 'setup', version: 0, state, serverTime: now, controlToken: credential.token, recoveryCode: recovery.code });
   }
   return json({ error: 'code_exhausted' }, 503);
+}
+
+// 控制权补发：创建比赛的那台手机丢了（换手机 / 被借走 / 清缓存），
+// 凭「房间码 + 找回码」在任意设备换发新的控制令牌。
+// 同时轮换找回码本身——旧令牌与旧找回码立即作废：
+// 补发即换锁，当初截屏发到班群里的旧码从此失效。
+// 失败计入限流器：找回码是第二个 Secret，不能白试。
+async function handleRecover(store, limiters, request) {
+  const body = await readBody(request);
+  if (body.error) return json({ error: body.error }, 400);
+  const code = String(body.data.code || '').toUpperCase();
+  if (!CODE_RE.test(code)) return throttled(limiters, request, json({ error: 'invalid_code' }, 400));
+  const presented = await hashRecovery(String(body.data.recovery || ''));
+  if (!presented) return throttled(limiters, request, json({ error: 'invalid_recovery' }, 400));
+  const row = await store.getGame(code);
+  if (row === null) return throttled(limiters, request, json({ error: 'game_not_found' }, 404));
+  if (!row || row.error) return dbError();
+  if (typeof row.recovery_hash !== 'string' || !row.recovery_hash || !sameHash(presented, row.recovery_hash)) {
+    return throttled(limiters, request, json({ error: 'recovery_failed' }, 403));
+  }
+  const credential = await newControllerCredential();
+  const recovery = await newRecoveryCredential();
+  const nowIso = new Date().toISOString();
+  const score = (st) => `${st.teams[0].score}:${st.teams[1].score}`;
+  const logEntry = {
+    actor: 'recovery',
+    action: JSON.stringify({ type: 'recover', by: 'recovery-code' }),
+    before_score: score(row.state),
+    after_score: score(row.state),
+    clock_ms: Math.round(deriveRemaining(row.state.clock, Date.now())),
+    at: nowIso,
+  };
+  const written = await store.reissueController(code, row.version, {
+    controller_hash: credential.hash, recovery_hash: recovery.hash, updated_at: nowIso,
+  }, logEntry);
+  if (written.error) return dbError();
+  if (!written.changed) return json({ error: 'conflict' }, 409);
+  // 新令牌与新找回码都只在这一次响应里明文出现
+  return json({
+    code, status: row.state.status, version: written.version,
+    state: row.state, serverTime: nowIso, controlToken: credential.token, recoveryCode: recovery.code,
+  });
 }
 
 async function handleApply(store, limiters, request) {
@@ -259,6 +318,10 @@ export async function handleGames({ request, store, limiters = DEFAULT_LIMITERS 
     if (action === 'create' || action === 'apply') {
       if (method !== 'POST') return json({ error: 'method_not_allowed' }, 405, { allow: 'POST' });
       return action === 'create' ? await handleCreate(store, limiters, request) : await handleApply(store, limiters, request);
+    }
+    if (action === 'recover') {
+      if (method !== 'POST') return json({ error: 'method_not_allowed' }, 405, { allow: 'POST' });
+      return await handleRecover(store, limiters, request);
     }
     return json({ error: 'not_found' }, 404);
   } catch {

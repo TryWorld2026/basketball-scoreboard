@@ -663,6 +663,74 @@ console.log('\n[21] 服务端到点推进：记分员手机不在场，比赛也
   }
 }
 
+console.log('\n[22] 控制权补发：创建比赛的手机丢了，凭找回码换发');
+{
+  const { call, raw, get, newGame } = fresh();
+  const { code, created } = await newGame();
+  const RECOVERY_RE = /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$/;
+
+  ok('建赛响应带回 8 位找回码（明文只出现这一次）', RECOVERY_RE.test(created.recoveryCode || ''), String(created.recoveryCode));
+  const read = await call('GET', `action=get&code=${code}`);
+  ok('公开读取不泄漏找回码与控制令牌',
+    !JSON.stringify(read.json).includes(created.recoveryCode) && !JSON.stringify(read.json).includes(created.controlToken));
+
+  await raw(code, read.json.version, { type: 'score', team: 0, points: 2 });
+  const before = (await get(code)).json;
+
+  const wrong = await call('POST', 'action=recover', { code, recovery: 'AAAA-BBBB' });
+  ok('错误找回码 403 且不改变任何状态', wrong.status === 403 && wrong.json?.error === 'recovery_failed', JSON.stringify(wrong.json));
+  ok('失败补发不泄漏新令牌', !wrong.json?.controlToken);
+  const malformed = await call('POST', 'action=recover', { code, recovery: 'nope' });
+  ok('畸形找回码 400', malformed.status === 400 && malformed.json?.error === 'invalid_recovery', JSON.stringify(malformed.json));
+  ok('不存在房间的补发 404', (await call('POST', 'action=recover', { code: 'ZZZZ', recovery: created.recoveryCode })).status === 404);
+  ok('GET 走补发接口 405', (await call('GET', `action=recover&code=${code}`)).status === 405);
+
+  const done = await call('POST', 'action=recover', { code, recovery: created.recoveryCode });
+  ok('正确找回码换发成功（返回新令牌 + 新找回码）',
+    done.status === 200 && typeof done.json?.controlToken === 'string'
+      && done.json.controlToken !== created.controlToken && RECOVERY_RE.test(done.json?.recoveryCode || ''),
+    JSON.stringify({ status: done.status, err: done.json?.error }));
+  ok('补发不碰比赛状态（比分原样，版本 +1）',
+    done.json?.state?.teams?.[0]?.score === 2 && done.json?.version === before.version + 1,
+    JSON.stringify({ score: done.json?.state?.teams?.[0]?.score, v: done.json?.version }));
+
+  const oldWrite = await call('POST', 'action=apply', { code, version: done.json.version, action: { type: 'score', team: 1, points: 2 } }, { authorization: `Bearer ${created.controlToken}` });
+  ok('旧令牌在补发后作废（403）', oldWrite.status === 403 && oldWrite.json?.error === 'controller_required', JSON.stringify(oldWrite.json));
+  const newWrite = await call('POST', 'action=apply', { code, version: done.json.version, action: { type: 'score', team: 1, points: 2 } }, { authorization: `Bearer ${done.json.controlToken}` });
+  ok('新令牌能写', newWrite.status === 200 && newWrite.json?.state?.teams?.[1]?.score === 2, JSON.stringify(newWrite.json));
+
+  const replayOld = await call('POST', 'action=recover', { code, recovery: created.recoveryCode });
+  ok('旧找回码补发后立即失效（一次性）', replayOld.status === 403 && replayOld.json?.error === 'recovery_failed', JSON.stringify(replayOld.json));
+  const again = await call('POST', 'action=recover', { code, recovery: done.json.recoveryCode });
+  ok('新找回码可再次补发（轮换后救援能力不断）', again.status === 200 && typeof again.json?.controlToken === 'string',
+    JSON.stringify({ status: again.status, err: again.json?.error }));
+
+  const log = (await call('GET', `action=log&code=${code}`)).json.entries;
+  const recoveries = log.filter((e) => e.actor === 'recovery');
+  ok('补发落审计（actor=recovery，可查谁换了锁）', recoveries.length === 2 && recoveries[0].action.includes('recovery-code'),
+    JSON.stringify(recoveries.map((e) => e.actor)));
+
+  // 限流：找回码是第二个 Secret，不能白试
+  {
+    const store = createFakeStore();
+    const limiters = { fail: createRateLimiter({ limit: 2, windowMs: 60_000 }), create: createRateLimiter({ limit: 10, windowMs: 60_000 }) };
+    const call2 = async (method, qs, body) => {
+      const req = new Request(`http://s/api/game?${qs}`, {
+        method,
+        headers: body ? { 'content-type': 'application/json' } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const res = await handleGames({ request: req, store, limiters });
+      return { status: res.status, json: await res.json() };
+    };
+    const c = await call2('POST', 'action=create', { teams: [{ name: 'A', color: '#1E4FD8' }, { name: 'B', color: '#E11D2E' }], config: {} });
+    await call2('POST', 'action=recover', { code: c.json.code, recovery: 'AAAA-BBBB' });
+    await call2('POST', 'action=recover', { code: c.json.code, recovery: 'AAAA-BBBB' });
+    const third = await call2('POST', 'action=recover', { code: c.json.code, recovery: 'AAAA-BBBB' });
+    ok('连续错码达到上限被限流 429（枚举有成本）', third.status === 429 && third.json.error === 'too_many_requests', JSON.stringify(third.json));
+  }
+}
+
 console.log(`\n探针结果：通过 ${pass} / 攻击命中 ${fail}`);
 if (bugs.length) { console.log('\n命中清单：'); for (const b of bugs) console.log('  - ' + b); }
 // 探针变红必须让 CI 失败——否则这张网只是控制台输出，不构成门禁

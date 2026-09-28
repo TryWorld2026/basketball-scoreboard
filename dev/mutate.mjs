@@ -12,6 +12,8 @@ const STOREJS = R('../public/js/store.js');
 const CLOCKJS = R('../public/js/clock.js');
 const CSSFILE = R('../public/styles.css');
 const CARDJS = R('../public/js/views/card.js');
+const ROOMJS = R('../public/js/views/room.js');
+const HOMEJS = R('../public/js/views/home.js');
 
 const mutants = [
   {
@@ -93,8 +95,12 @@ const mutants = [
   {
     name: 'M10 CAS 版本条件被忽略（并发丢分）',
     file: FAKESTORE,
-    from: `if (!row || row.version !== expectedVersion) return { changed: false, version: expectedVersion + 1 };`,
-    to: `if (!row) return { changed: false, version: expectedVersion + 1 };`,
+    from: `    async casUpdateGame(code, expectedVersion, patch, logEntry = null) {
+      const row = rows.get(code);
+      if (!row || row.version !== expectedVersion) return { changed: false, version: expectedVersion + 1 };`,
+    to: `    async casUpdateGame(code, expectedVersion, patch, logEntry = null) {
+      const row = rows.get(code);
+      if (!row) return { changed: false, version: expectedVersion + 1 };`,
     suite: 'attack', mustRedOn: '两笔都应落地（CAS 重放不丢分）',
   },
   {
@@ -350,6 +356,53 @@ const mutants = [
     from: `    if (JSON.stringify(result.state) === JSON.stringify(game.state)) continue; // 没到点`,
     to: `    if (JSON.stringify(result.state) === JSON.stringify(game.state)) { /* MUTANT: 闸门删除 */ }`,
     suite: 'attack', mustRedOn: '没到点的比赛不被 cron 写库（不涨版本）',
+  },
+  {
+    name: 'M43 找回码校验被移除（任意码都能换发控制权）',
+    file: HANDLER,
+    from: `  if (typeof row.recovery_hash !== 'string' || !row.recovery_hash || !sameHash(presented, row.recovery_hash)) {
+    return throttled(limiters, request, json({ error: 'recovery_failed' }, 403));
+  }`,
+    to: `  /* MUTANT: 找回码校验删除 */`,
+    suite: 'attack', mustRedOn: '错误找回码 403 且不改变任何状态',
+  },
+  {
+    name: 'M44 补发不轮换找回码（旧码流落班群后还能反复抢控制权）',
+    file: HANDLER,
+    from: `    controller_hash: credential.hash, recovery_hash: recovery.hash, updated_at: nowIso,`,
+    to: `    controller_hash: credential.hash, recovery_hash: row.recovery_hash, updated_at: nowIso,`,
+    suite: 'attack', mustRedOn: '旧找回码补发后立即失效（一次性）',
+  },
+  {
+    name: 'M45 补发不换 controller_hash（丢的那台手机令牌仍能写）',
+    file: HANDLER,
+    from: `  const credential = await newControllerCredential();
+  const recovery = await newRecoveryCredential();
+  const nowIso = new Date().toISOString();
+  const score = (st) => \`\${st.teams[0].score}:\${st.teams[1].score}\`;
+  const logEntry = {
+    actor: 'recovery',`,
+    to: `  const credential = { token: '', hash: row.controller_hash };
+  const recovery = await newRecoveryCredential();
+  const nowIso = new Date().toISOString();
+  const score = (st) => \`\${st.teams[0].score}:\${st.teams[1].score}\`;
+  const logEntry = {
+    actor: 'recovery',`,
+    suite: 'attack', mustRedOn: '旧令牌在补发后作废（403）',
+  },
+  {
+    name: 'M46 房间页不再展示找回码（用户没法把它带出这台设备）',
+    file: ROOMJS,
+    from: `      const recovery = recoveryCodeOf(code);`,
+    to: `      const recovery = null;`,
+    suite: 'mobile', mustRedOn: '房间页展示并支持复制找回码',
+  },
+  {
+    name: 'M47 首页找回码换发接线被改坏（丢了手机只能重建比赛）',
+    file: HOMEJS,
+    from: `api('/api/game?action=recover', { method: 'POST', body: { code, recovery } })`,
+    to: `api('/api/game?action=create', { method: 'POST', body: { code, recovery } })`,
+    suite: 'mobile', mustRedOn: '首页提供找回码换发表单',
   },
 ];
 

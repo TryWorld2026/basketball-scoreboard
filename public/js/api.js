@@ -20,6 +20,8 @@ const MESSAGES = {
   nothing_to_undo: '没有可撤销的操作',
   controller_required: '此设备没有控制凭证——请用创建比赛的手机操作，或在房间页复制「控制端链接」',
   reset_not_allowed: '只能重开已结束的比赛',
+  recovery_failed: '找回码不正确——对照建赛时保存的码（含中间的短横线）再试',
+  invalid_recovery: '找回码格式不正确（8 位，形如 K7QM-3F9H）',
   conflict: '状态已被其他操作更新，已自动刷新',
   needs_online: '这个操作要联网才能发——恢复连接后再试（得分/犯规会先排队）',
   queue_full: '待发送太多了，请等联网后一并补发',

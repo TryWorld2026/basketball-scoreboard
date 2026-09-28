@@ -57,12 +57,13 @@ console.log('— 静态资源与路由 —');
 }
 
 console.log('\n— 建赛与读取（真实 SQL 写入）—');
-let code; let version;
+let code; let version; let controlRecovery;
 {
   const created = await call('action=create', { method: 'POST', body: { teams: TEAMS, config: { periods: 2, periodMinutes: 1, foulLimit: 5, timeouts: 2, trackPlayers: true }, players: [{ team: 0, name: '赵六' }] } });
   ok('create 成功', created.status === 200 && /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$/.test(created.json?.code || ''), JSON.stringify(created.json?.error || created.status));
   code = created.json.code;
   controlTokens.set(code, created.json.controlToken);
+  controlRecovery = created.json.recoveryCode;
   version = created.json.version;
   ok('初始状态 setup / 0:0', created.json?.state?.status === 'setup' && created.json?.state?.teams?.[0]?.score === 0);
   const read = await get(code);
@@ -135,6 +136,30 @@ console.log('\n— 锁定与重开 —');
   ok('结束后拒绝改分', locked.status === 409 && locked.json?.error === 'game_finished', `${locked.status} ${JSON.stringify(locked.json)}`);
   const rs = await apply(code, { type: 'reset' }, version);
   ok('重开一场并清零', rs.json?.status === 'setup' && rs.json?.state?.teams?.[0]?.score === 0, JSON.stringify(rs.json?.error));
+}
+
+console.log('\n— 控制权补发（找回码换发，真实 SQL）—');
+{
+  const wrong = await call('action=recover', { method: 'POST', body: { code, recovery: 'AAAA-BBBB' } });
+  ok('错误找回码 403', wrong.status === 403 && wrong.json?.error === 'recovery_failed', JSON.stringify(wrong.json));
+  const done = await call('action=recover', { method: 'POST', body: { code, recovery: controlRecovery } });
+  ok('正确找回码换发成功（新令牌 + 新找回码）',
+    done.status === 200 && typeof done.json?.controlToken === 'string'
+      && /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$/.test(done.json?.recoveryCode || ''),
+    JSON.stringify(done.json?.error || done.status));
+  ok('补发不碰比赛状态（reset 后的 setup 原样）', done.json?.status === 'setup', JSON.stringify(done.json?.status));
+  const stale = await call('action=apply', {
+    method: 'POST', body: { code, version: done.json.version, action: { type: 'score', team: 0, points: 2 } },
+    headers: { authorization: `Bearer ${controlTokens.get(code)}` },
+  });
+  ok('旧令牌换发后作废（403）', stale.status === 403 && stale.json?.error === 'controller_required', JSON.stringify(stale.json));
+  const withNew = await call('action=apply', {
+    method: 'POST', body: { code, version: done.json.version, action: { type: 'score', team: 0, points: 2 } },
+    headers: { authorization: `Bearer ${done.json.controlToken}` },
+  });
+  ok('新令牌能写', withNew.status === 200 && withNew.json?.state?.teams?.[0]?.score === 2, JSON.stringify(withNew.json?.error));
+  // 后续协议检查都用新令牌（旧的已作废）
+  controlTokens.set(code, done.json.controlToken);
 }
 
 console.log('\n— 协议健壮性（线上同样生效）—');

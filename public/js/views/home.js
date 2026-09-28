@@ -2,7 +2,7 @@
 import { api } from '../api.js';
 import { navigate } from '../router.js';
 import { h, COLORS, colorPicker } from '../ui.js';
-import { rememberControlToken } from '../store.js';
+import { rememberControlToken, rememberRecoveryCode } from '../store.js';
 
 const CODE_RE = /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$/;
 
@@ -99,6 +99,8 @@ export default {
         });
         // 控制凭证只落这台设备：房间码给所有人读，写比分要凭证
         rememberControlToken(res.code, res.controlToken);
+        // 找回码同样只明文出现这一次——手机丢了靠它换回控制权（房间页可复制带走）
+        rememberRecoveryCode(res.code, res.recoveryCode);
         navigate(`/room/${res.code}`);
       } catch (e) {
         showErr(e.message);
@@ -124,6 +126,48 @@ export default {
     const joinErr = h('p', { class: 'form-error', role: 'alert', hidden: true });
     const joinBtn = h('button', { class: 'ghost big', type: 'button', onclick: onJoin }, '进入房间');
 
+    // ---------- 找回控制权：创建比赛的那台手机丢了 ----------
+    // 房间码是公开的，找回码不是——它只在建赛时明文出现过一次。
+    // 换发成功会同时轮换找回码：旧码（可能已截屏流落到班群）从此失效。
+    const recCode = h('input', {
+      class: 'inp code-input', maxlength: 9, placeholder: 'K7QM-3F9H', autocapitalize: 'characters',
+      autocomplete: 'off', spellcheck: false, 'aria-label': '控制找回码',
+      oninput: (e) => { e.target.value = e.target.value.toUpperCase().replace(/[^2-9A-HJ-NP-Z-]/g, '').slice(0, 9); },
+      onkeydown: (e) => { if (e.key === 'Enter') onRecover(); },
+    });
+    const recRoom = h('input', {
+      class: 'inp code-input', maxlength: 4, placeholder: '4K7P', autocapitalize: 'characters',
+      autocomplete: 'off', spellcheck: false, 'aria-label': '房间码',
+      oninput: (e) => { e.target.value = e.target.value.toUpperCase().replace(/[^2-9A-HJ-NP-Z]/g, '').slice(0, 4); },
+      onkeydown: (e) => { if (e.key === 'Enter') onRecover(); },
+    });
+    const recErr = h('p', { class: 'form-error', role: 'alert', hidden: true });
+    let recovering = false;
+    const onRecover = async () => {
+      if (recovering) return;
+      const code = recRoom.value.trim();
+      const recovery = recCode.value.trim();
+      if (!CODE_RE.test(code)) { recErr.textContent = '先填 4 位房间码'; recErr.hidden = false; return; }
+      if (!/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$/.test(recovery)) {
+        recErr.textContent = '找回码是 8 位字母数字（含中间短横线），建赛时保存的那个';
+        recErr.hidden = false;
+        return;
+      }
+      recovering = true;
+      recErr.hidden = true;
+      try {
+        const res = await api('/api/game?action=recover', { method: 'POST', body: { code, recovery } });
+        rememberControlToken(res.code, res.controlToken);
+        rememberRecoveryCode(res.code, res.recoveryCode); // 新码只在这时候出现，赶紧存
+        navigate(`/room/${res.code}`);
+      } catch (e) {
+        recErr.textContent = e.message;
+        recErr.hidden = false;
+        recovering = false;
+      }
+    };
+    const recBtn = h('button', { class: 'ghost big', type: 'button', onclick: onRecover }, '换发控制权');
+
     root.append(
       h('header', { class: 'brand' },
         h('span', { class: 'brand-led' }, '🏀'),
@@ -148,7 +192,10 @@ export default {
         h('section', { class: 'panel join' },
           h('h2', null, '加入比赛'),
           h('p', { class: 'muted' }, '输入 4 位房间码，或直接扫码/用另一台设备打开链接'),
-          joinInput, joinBtn, joinErr)),
+          joinInput, joinBtn, joinErr,
+          h('h3', { class: 'join-sub' }, '创建比赛的手机丢了？'),
+          h('p', { class: 'muted small' }, '用房码 + 建赛时保存的 8 位找回码换发新的控制令牌。换发即换锁：旧手机上的令牌和旧找回码同时作废。'),
+          recRoom, recCode, recBtn, recErr)),
     );
 
     trackPlayers.addEventListener('change', () => {
