@@ -15,11 +15,13 @@ const CARDJS = R('../public/js/views/card.js');
 
 const mutants = [
   {
-    name: 'M1 幂等键判定被移除',
-    file: RULES,
-    from: `if (nonce && Array.isArray(s.nonces) && s.nonces.includes(nonce)) return { state: s, duplicate: true };`,
-    to: `/* MUTANT: 幂等判定删除 */`,
-    suite: 'attack', mustRedOn: '同 nonce 重发只计一次分',
+    name: 'M1 写路径绕过 durable receipts（幂等退回无去重）',
+    file: HANDLER,
+    from: `    const written = nonce
+      ? await store.casUpdateGameWithReceipt(code, row.version, patch, nonce)
+      : await store.casUpdateGame(code, row.version, patch);`,
+    to: `    const written = await store.casUpdateGame(code, row.version, patch);`,
+    suite: 'attack', mustRedOn: '补发窗口超过 30 次后续写入后仍只计一次',
   },
   {
     name: 'M2 严格整数退回 Number 强制转换',
@@ -40,7 +42,7 @@ const mutants = [
     file: HANDLER,
     from: `    if (JSON.stringify(result.state) === JSON.stringify(row.state)) {`,
     to: `    if (false) {`,
-    suite: 'attack', mustRedOn: '重发不涨版本并标记 noop',
+    suite: 'attack', mustRedOn: '时钟没归零时带 nonce 的 clock_zero 不改状态不涨版本',
   },
   {
     name: 'M5 休息期跳节退回报错',

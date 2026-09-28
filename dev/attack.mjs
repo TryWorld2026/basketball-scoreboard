@@ -122,6 +122,38 @@ console.log('\n[1] 幂等性：同一意图补发只记一次（户外丢包场�
   ok('不同意图仍正常计分（幂等键没误伤）', (await get(code)).json.state.teams[0].score === 4);
 }
 
+console.log('\n[1b] 幂等的硬边界：补发窗口不限于最近 30 个（durable receipts）');
+{
+  // 旧实现把 nonce 塞进 state 只留最近 30 条：响应丢失后，若期间另有 30+ 次写入，
+  // 补发就被挤出窗口，同一意图记两次分。双记分员 + 弱网重连完全能凑出这个间隔。
+  const { raw, get, newGame } = fresh();
+  const { code } = await newGame();
+  const lost = 'lost-response-nonce-0001';
+  await raw(code, (await get(code)).json.version, { type: 'score', team: 0, points: 2, nonce: lost });
+  for (let i = 0; i < 40; i += 1) {
+    await raw(code, (await get(code)).json.version, { type: 'foul', team: i % 2, nonce: `busy-${i}-${Date.now()}` });
+  }
+  const beforeReplay = (await get(code)).json.version;
+  const replay = await raw(code, beforeReplay, { type: 'score', team: 0, points: 2, nonce: lost });
+  const s = (await get(code)).json.state;
+  ok('补发窗口超过 30 次后续写入后仍只计一次', s.teams[0].score === 2, `实际 ${s.teams[0].score}`);
+  ok('迟到补发被识别为 noop 且不涨版本', replay.json?.noop === true && replay.json?.version === beforeReplay, JSON.stringify({ noop: replay.json?.noop, v: replay.json?.version, before: beforeReplay }));
+}
+
+console.log('\n[1c] 带 nonce 的无变化动作：不写库、不涨版本');
+{
+  // 无变化动作若为了"记下 nonce"而写库，会白白涨版本、还把无意义冲突推给另一端
+  const { raw, get, newGame } = fresh();
+  const { code } = await newGame();
+  await raw(code, (await get(code)).json.version, { type: 'clock_start' });
+  const before = (await get(code)).json;
+  const early = await raw(code, before.version, { type: 'clock_zero', nonce: 'early-zero-0001' });
+  const after = (await get(code)).json;
+  ok('时钟没归零时带 nonce 的 clock_zero 不改状态不涨版本', after.version === before.version && after.state.clock.period === before.state.clock.period,
+    `v ${before.version} → ${after.version}`);
+  ok('无变化动作响应标记 noop', early.json?.noop === true, JSON.stringify({ noop: early.json?.noop }));
+}
+
 console.log('\n[2] 并发：两个记分员同时 +1');
 {
   const { raw, get, newGame } = fresh();

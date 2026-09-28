@@ -86,7 +86,6 @@ export function emptyState(config, teams, players) {
     shot: { running: false, since: null, remainingMs: config.shotClockSeconds * 1000 },
     possession: 0,
     undo: null,
-    nonces: [],
     startedAt: null, finishedAt: null, winner: null,
   };
 }
@@ -176,16 +175,18 @@ function stopGameClock(s, nowMs) {
 }
 
 /**
- * 对外入口：先做幂等判定（响应丢失后客户端会补发同一意图，户外信号差时必然发生），
- * 再交给纯规则函数；成功应用的 nonce 记入有界历史。
+ * nonce 合法性：客户端每次意图自带（响应丢失后原样补发，户外弱网必然发生）。
+ * 去重不放在 state 里——旧实现把 nonce 塞进比赛 JSON 只留最近 30 条，
+ * 双记分员场景下超过 30 次后续写入，补发就会被挤出窗口、同一意图记两次分。
+ * 现在回执落 action_receipts 表，与状态写入同一个批处理，窗口无限（见 dev/attack.mjs [1b]）。
  */
+export const readNonce = (action) => (
+  typeof action?.nonce === 'string' && action.nonce.length >= 8 && action.nonce.length <= 64 ? action.nonce : null
+);
+
+/** 对外入口：纯规则函数。幂等由 handler 的 durable receipt 负责，这里不算计。 */
 export function applyAction(prev, action, nowIso, nowMs = Date.now()) {
-  const nonce = typeof action?.nonce === 'string' && action.nonce.length >= 8 && action.nonce.length <= 64 ? action.nonce : null;
-  const s = clone(prev);
-  if (nonce && Array.isArray(s.nonces) && s.nonces.includes(nonce)) return { state: s, duplicate: true };
-  const res = runAction(s, action, nowIso, nowMs);
-  if (res.state && nonce) res.state.nonces = [...(res.state.nonces || []), nonce].slice(-30);
-  return res;
+  return runAction(clone(prev), action, nowIso, nowMs);
 }
 
 function runAction(s, action, nowIso, nowMs) {
@@ -206,13 +207,13 @@ function runAction(s, action, nowIso, nowMs) {
     // 只能重开已结束的比赛：进行中擦库是记分员最怕的误触且不可逆。
     // UI 也只在结束后显示「重开一场」——服务端这条是门禁，不信客户端。
     if (s.status !== 'finished') return { error: 'reset_not_allowed', status: 409 };
-    const fresh = emptyState(
+    // 不回迁 nonce 历史：去重靠 action_receipts 表（随比赛行级联删除），
+    // 旧意图在重开后被补发由回执拦，不依赖 state 里的字段。
+    return { state: emptyState(
       s.config,
       s.teams.map((t) => ({ name: t.name, color: t.color })),
       s.players.map((p) => ({ team: p.team, name: p.name, points: 0 })),
-    );
-    fresh.nonces = s.nonces || []; // 旧意图不得在重开后被补发二次生效
-    return { state: fresh };
+    ) };
   }
 
   switch (type) {

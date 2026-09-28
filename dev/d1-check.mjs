@@ -69,6 +69,11 @@ console.log('\n— 计分与幂等（真 SQL CAS）—');
   ok('版本号单调递增', version === 1, `version=${version}`);
   const r2 = await apply(code, { type: 'score', team: 0, points: 2, playerId: '赵六', nonce }, version);
   ok('同 nonce 重发被幂等拦下（noop）', r2.json?.noop === true && r2.json?.state?.teams?.[0]?.score === 2, JSON.stringify({ noop: r2.json?.noop, score: r2.json?.state?.teams?.[0]?.score }));
+  // 回执落表后，中间隔着别的写入，补发仍然只算一次（旧实现只留最近 30 个 nonce，这里会双计）
+  const mid = await apply(code, { type: 'foul', team: 1 }, version);
+  version = mid.json.version;
+  const late = await apply(code, { type: 'score', team: 0, points: 2, playerId: '赵六', nonce }, version);
+  ok('隔着后续写入的迟到补发仍只计一次（durable receipt）', late.json?.noop === true && late.json?.state?.teams?.[0]?.score === 2, JSON.stringify({ noop: late.json?.noop, score: late.json?.state?.teams?.[0]?.score }));
   const r3 = await apply(code, { type: 'score', team: 1, points: 3 }, version);
   ok('不同意图正常计分', r3.json?.state?.teams?.[1]?.score === 3);
   version = r3.json.version;

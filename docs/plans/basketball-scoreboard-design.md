@@ -140,9 +140,19 @@ create table games (
   version     integer not null default 0,   -- 每次写 +1，CAS 用
   state       json  not null,               -- 见下（SQLite 存 JSON 文本）
   created_at  timestamptz not null default now(),
-  updated_at  timestamptz not null default now()
+  updated_at  timestamptz not null default now(),
+  controller_hash text                      -- 控制凭证的 SHA-256（migrations/0002；NULL = 迁移前的老行，只读）
 );
 -- 预留赛事扩展：以后加 tournament_id 列，不动结构
+
+-- 幂等回执（migrations/0002）：nonce 落地过就记一行，与状态写入同一个批处理。
+-- 去重窗口不限长度，随比赛行级联删除（半途放弃局清理时一起走）。
+create table action_receipts (
+  code        text not null references games(code) on delete cascade,
+  nonce       text not null,
+  created_at  text not null,
+  primary key (code, nonce)
+);
 ```
 
 `state` 结构：
@@ -189,7 +199,7 @@ create table games (
 - **失败限流（对抗审查补）**：房间码即访问能力，4 位码可被遍历。按 IP 只统计失败请求（房间不存在/参数非法/冲突），正常轮询不计次；进程内计数，属尽力而为（见 README 已知边界）。
 - **半途放弃局清理（对抗审查补）**：只清 `setup` 会让"建过赛、打了几下就走人"的房间永久留在库里。现在建赛时顺带清掉超过 7 天无写入的 `live/break/timeout` 行；`finished` 永久保留（数据卡链接要能长期打开）。
 - **乱序响应保护（对抗审查补）**：轮询 GET 可能比刚发出的 apply 响应更晚到达。前端按 `version` 丢弃旧快照，否则比分会瞬态闪回。
-- **幂等键（对抗审查补）**：户外丢包时客户端会补发同一意图，服务端按 `nonce` 去重（每场保留最近 30 个），重复意图只记一次且不涨版本。没有这一条，一次信号抖动就能凭空多算 2 分。
+- **幂等键（对抗审查补，2026-09-28 加固）**：户外丢包时客户端会补发同一意图，服务端按 `nonce` 去重——回执落 `action_receipts` 表，与状态写入同一个批处理（`INSERT OR IGNORE` 回执 + `UPDATE ... WHERE version` 双门禁），重复意图只记一次且不涨版本。去重窗口不限长度：旧实现把 nonce 塞进比赛 JSON 只留最近 30 条，双记分员场景下超过 30 次后续写入，补发就被挤出窗口、同一意图记两次分。没有这一条，一次信号抖动就能凭空多算 2 分。
 - **模式门禁（对抗审查补）**：记分/记犯规只在 `clock.mode==='game'` 时接受——休息期按 +3 会静默记进下一节的流水，属于数据污染；叫暂停还要求 `status==='live'`，否则未开打就能烧掉一次暂停。
 - **无变化不写库**：应用后状态与之前等价（如重复上报归零）直接返回当前状态，不涨版本，避免多端同时上报造成无意义 CAS 冲突。
 - **休息中按"下一节"= 提前结束休息**（班赛休息期常提前开打），不再报错。
@@ -240,9 +250,9 @@ create table games (
 9. 错误房间码 → 友好提示 —— 实测通过
 10. 部署后真实请求验证 —— **已完成**：`node dev/d1-check.mjs <线上地址>` 对 Cloudflare 生产环境 27/27 通过（含真 SQL CAS、幂等 noop、并发双写、SPA 深链、no-store），并在浏览器中确认跨进程写入经轮询反映到大屏
 
-**测试网（本地，`npm test` 六张）**：`node dev/smoke.mjs` 34 项主流程；`node dev/attack.mjs` 98 项对抗探针（幂等、并发、跳节滥用、类型强制、不可逆性、无界增长、注入面、协议健壮性、胜负判定、控制凭证对抗面）；`dev/store.mjs` 27 项前端仓库层；`dev/parity.mjs` 49 项双端时钟镜像一致性；`dev/mobile.mjs` 31 项移动端静态断言；`dev/mutate.mjs` 30 个变异体全部被击杀（证明每条断言都不是空断言）。
+**测试网（本地，`npm test` 六张）**：`node dev/smoke.mjs` 34 项主流程；`node dev/attack.mjs` 102 项对抗探针（幂等、并发、跳节滥用、类型强制、不可逆性、无界增长、注入面、协议健壮性、胜负判定、控制凭证对抗面、幂等窗口硬边界）；`dev/store.mjs` 27 项前端仓库层；`dev/parity.mjs` 49 项双端时钟镜像一致性；`dev/mobile.mjs` 31 项移动端静态断言；`dev/mutate.mjs` 30 个变异体全部被击杀（证明每条断言都不是空断言）。
 
-**对抗审查净新增的修复**：幂等键缺失（响应丢失补发会双计）、休息/暂停期间记分串节、未开打可烧暂停、`Number()` 静默吞脏输入、无变化写库涨版本造成冲突风暴、休息中无法提前开打、控制端不显示剩余暂停、乱序轮询响应覆盖新快照、`reset` 不限终局（进行中可擦库）、房间码即可写比分（已改为控制凭证隔离）。
+**对抗审查净新增的修复**：幂等键缺失（响应丢失补发会双计）、幂等窗口只有 30 条（补发被挤出后双计，已改 durable receipts）、带 nonce 的无变化动作白涨版本、休息/暂停期间记分串节、未开打可烧暂停、`Number()` 静默吞脏输入、无变化写库涨版本造成冲突风暴、休息中无法提前开打、控制端不显示剩余暂停、乱序轮询响应覆盖新快照、`reset` 不限终局（进行中可擦库）、房间码即可写比分（已改为控制凭证隔离）。
 
 ## 11. 实现里程碑
 

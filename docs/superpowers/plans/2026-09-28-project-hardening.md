@@ -29,10 +29,10 @@
 
 ## Task 2: Fix no-op and idempotency boundaries
 
-- [ ] Add a failing regression test for nonce-bearing early `clock_zero` not changing state/version.
-- [ ] Persist accepted request IDs durably rather than only retaining the last 30 IDs in the game JSON; preserve CAS atomicity and bounded cleanup.
-- [ ] Test duplicate replay after more than 30 intervening writes and verify no extra score/version change.
-- [ ] Add both regressions to mutation coverage; run the full suite.
+- [x] Add a failing regression test for nonce-bearing early `clock_zero` not changing state/version.
+- [x] Persist accepted request IDs durably rather than only retaining the last 30 IDs in the game JSON; preserve CAS atomicity and bounded cleanup.
+- [x] Test duplicate replay after more than 30 intervening writes and verify no extra score/version change.
+- [x] Add both regressions to mutation coverage; run the full suite.
 
 ## Task 3: Bound and make offline operations safe
 

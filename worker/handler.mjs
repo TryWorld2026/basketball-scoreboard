@@ -1,7 +1,7 @@
 // 篮球计分板 HTTP 业务层 —— 与具体数据库无关，只依赖注入的 store 接口：
-//   getGame / insertGame / casUpdateGame / deleteStaleSetup / deleteAbandoned
+//   getGame / insertGame / casUpdateGame / casUpdateGameWithReceipt / deleteStaleSetup / deleteAbandoned
 // 浏览器同源调用 /api/game?action=get|create|apply。
-import { applyAction, emptyState, newCode, sanitizeConfig, sanitizePlayers, sanitizeTeams } from './rules.mjs';
+import { applyAction, emptyState, newCode, readNonce, sanitizeConfig, sanitizePlayers, sanitizeTeams } from './rules.mjs';
 import { createRateLimiter, ipOf } from './ratelimit.mjs';
 
 const json = (body, status = 200, headers = {}) => Response.json(body, {
@@ -134,6 +134,7 @@ async function handleApply(store, limiters, request) {
   if (!Number.isInteger(Number(body.data.version)) || Number(body.data.version) < 0) return json({ error: 'invalid_version' }, 400);
   const action = body.data.action;
   if (!action || typeof action !== 'object' || typeof action.type !== 'string') return json({ error: 'invalid_action' }, 400);
+  const nonce = readNonce(action);
 
   // 以服务端最新状态为准应用意图；CAS 冲突则重读重放（有界）
   for (let attempt = 0; attempt < CAS_ATTEMPTS; attempt += 1) {
@@ -146,17 +147,27 @@ async function handleApply(store, limiters, request) {
     const nowMs = Date.now();
     const result = applyAction(row.state, action, new Date(nowMs).toISOString(), nowMs);
     if (result.error) return json({ error: result.error }, result.status || 400);
-    // 幂等/无变化：不写库、不涨版本，避免多端同时上报归零造成无意义冲突
+    // 无变化：不写库、不涨版本（重复上报归零、时钟没归零就发 clock_zero）
     if (JSON.stringify(result.state) === JSON.stringify(row.state)) {
       return json({
         code, status: row.state.status, version: row.version,
         state: row.state, serverTime: new Date().toISOString(), noop: true,
       });
     }
-    const written = await store.casUpdateGame(code, row.version, {
-      state: result.state, status: result.state.status, updated_at: new Date().toISOString(),
-    });
+    const patch = { state: result.state, status: result.state.status, updated_at: new Date().toISOString() };
+    // 带 nonce 的意图走「回执 + CAS」同一个批处理：回执已在 = 这个意图落地过
+    // （响应丢失后的补发），按 noop 回当前状态，不二次生效、不涨版本。
+    // 回执与比赛行级联删除，去重窗口不限于最近 N 条。
+    const written = nonce
+      ? await store.casUpdateGameWithReceipt(code, row.version, patch, nonce)
+      : await store.casUpdateGame(code, row.version, patch);
     if (written.error) return dbError();
+    if (written.duplicate) {
+      return json({
+        code, status: row.state.status, version: row.version,
+        state: row.state, serverTime: new Date().toISOString(), noop: true,
+      });
+    }
     if (written.changed) {
       return json({
         code, status: result.state.status, version: written.version,
