@@ -1,6 +1,6 @@
 // 对抗式探针 —— 专打 dev/smoke.mjs 从未询问的维度。每个场景独立假库，避免残留状态伪装成缺陷。
 // 运行：node dev/attack.mjs
-import { handleGames } from '../worker/handler.mjs';
+import { handleGames, advanceDueGames } from '../worker/handler.mjs';
 import { applyAction, deriveClock, emptyState, sanitizeConfig, sanitizeTeams } from '../worker/rules.mjs';
 import { createRateLimiter } from '../worker/ratelimit.mjs';
 import { createFakeStore } from './fake-store.mjs';
@@ -589,6 +589,78 @@ console.log('\n[20] Worker 入口：安全响应头与路由（真实 fetch 形�
 
   const noDb = await worker.fetch(new Request('http://s/api/game?action=get&code=AB23'), { ASSETS: env.ASSETS });
   ok('没绑 D1 时 API 503 且同样带安全头', noDb.status === 503 && csp(noDb).includes("frame-ancestors 'none'"), `${noDb.status} ${csp(noDb)}`);
+}
+
+console.log('\n[21] 服务端到点推进：记分员手机不在场，比赛也不能卡在 00:00');
+{
+  const teams = sanitizeTeams([{ name: 'A', color: '#1E4FD8' }, { name: 'B', color: '#E11D2E' }]);
+  const seed = (status, clockPatch) => {
+    const st = emptyState(sanitizeConfig({ periods: 2, periodMinutes: 1, breakSeconds: 20 }), teams, []);
+    st.status = status;
+    st.clock = { ...st.clock, ...clockPatch };
+    return st;
+  };
+  const old = new Date(Date.now() - 3600_000).toISOString();
+  const rowOf = (store, code, state, version) => {
+    store._rows.set(code, { code, status: 'live', version, state, created_at: old, updated_at: old });
+    return store._rows.get(code);
+  };
+
+  { // 比赛时钟归零 → 进节间休息
+    const store = createFakeStore();
+    rowOf(store, 'ZERO', seed('live', { running: true, since: new Date(Date.now() - 120_000).toISOString(), remainingMs: 60_000 }), 4);
+    const r = await advanceDueGames(store, Date.now());
+    const row = store._rows.get('ZERO');
+    ok('到点的比赛被 cron 推进到节间休息', r.advanced === 1 && row.state.clock.mode === 'break' && row.version === 5,
+      JSON.stringify({ advanced: r.advanced, mode: row.state.clock.mode, v: row.version }));
+    const log = (await store.getLog('ZERO')).entries;
+    ok('cron 推进也落审计且 actor 可区分', log[0]?.actor === 'cron' && log[0].action.includes('server-cron'), JSON.stringify(log[0]));
+  }
+  { // 没到点：不写库、不涨版本、不落审计
+    const store = createFakeStore();
+    rowOf(store, 'RUN1', seed('live', { running: true, since: new Date().toISOString(), remainingMs: 600_000 }), 7);
+    const r = await advanceDueGames(store, Date.now());
+    ok('没到点的比赛不被 cron 写库（不涨版本）',
+      r.advanced === 0 && store._rows.get('RUN1').version === 7 && (await store.getLog('RUN1')).entries.length === 0,
+      JSON.stringify({ advanced: r.advanced, v: store._rows.get('RUN1').version }));
+  }
+  { // 停表 / 已结束：都不推进
+    const store = createFakeStore();
+    rowOf(store, 'STOP', seed('live', { running: false, remainingMs: 0 }), 2);
+    rowOf(store, 'DONE', seed('finished', { running: true, since: new Date(Date.now() - 120_000).toISOString(), remainingMs: 60_000 }), 9);
+    store._rows.get('DONE').status = 'finished';
+    const r = await advanceDueGames(store, Date.now());
+    ok('停表的比赛不推进（记分员主动停的表）', r.advanced === 0 && store._rows.get('STOP').version === 2);
+    ok('已结束的比赛不在推进名单里', store._rows.get('DONE').version === 9);
+  }
+  { // 和记分员撞车：版本已被抢先推过 → 不重复进节
+    const store = createFakeStore();
+    const raced = rowOf(store, 'RACE', seed('live', { running: true, since: new Date(Date.now() - 120_000).toISOString(), remainingMs: 60_000 }), 3);
+    raced.version = 4; // 记分员刚刚落地了一步
+    raced.state.clock = { ...raced.state.clock, period: 2, mode: 'break', running: true, since: new Date().toISOString(), remainingMs: 20_000 };
+    const r = await advanceDueGames(store, Date.now());
+    ok('和记分员撞车时不重复进节（CAS 保证只有一个生效）',
+      r.advanced === 0 && store._rows.get('RACE').state.clock.period === 2,
+      JSON.stringify({ advanced: r.advanced, period: store._rows.get('RACE').state.clock.period }));
+  }
+  { // 暂停倒计时到点 → 收回比赛时钟
+    const store = createFakeStore();
+    rowOf(store, 'TOUT', seed('live', { mode: 'timeout', running: true, since: new Date(Date.now() - 60_000).toISOString(), remainingMs: 30_000, gameRemainingMs: 55_000, timeoutTeam: 0 }), 5);
+    const r = await advanceDueGames(store, Date.now());
+    const c = store._rows.get('TOUT').state.clock;
+    ok('暂停倒计时到点被 cron 收回（比赛时钟回到停表值）',
+      r.advanced === 1 && c.mode === 'game' && c.remainingMs === 55_000 && c.timeoutTeam === null,
+      JSON.stringify({ mode: c.mode, remainingMs: c.remainingMs }));
+  }
+  { // 节间休息到点 → 摆好下一节，停表等开始（开表永远是记分员的权利）
+    const store = createFakeStore();
+    rowOf(store, 'BRK0', seed('live', { mode: 'break', period: 2, running: true, since: new Date(Date.now() - 30_000).toISOString(), remainingMs: 20_000, gameRemainingMs: 60_000 }), 6);
+    const r = await advanceDueGames(store, Date.now());
+    const c = store._rows.get('BRK0').state.clock;
+    ok('节间休息到点被 cron 摆成下一节（停表等开始，不自动开表）',
+      r.advanced === 1 && c.mode === 'game' && c.running === false && c.remainingMs === 60_000,
+      JSON.stringify({ mode: c.mode, running: c.running, remainingMs: c.remainingMs }));
+  }
 }
 
 console.log(`\n探针结果：通过 ${pass} / 攻击命中 ${fail}`);

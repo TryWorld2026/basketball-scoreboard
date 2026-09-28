@@ -113,6 +113,23 @@ export function createD1Store(db) {
       return { entries: (result?.results || []).map((r) => ({ ...r, seq: asInt(r.seq), clock_ms: asInt(r.clock_ms) })) };
     },
 
+    // 到点推进用：只捞状态列是 live 的行——运行中的时钟必然 live
+    // （clock_start 会把 setup 激活成 live），所以不需要全表扫。
+    async listLiveGames() {
+      let result;
+      try {
+        result = await db.prepare("SELECT code, version, state FROM games WHERE status = 'live'").all();
+      } catch {
+        return { error: 'db' };
+      }
+      const games = [];
+      for (const r of result?.results || []) {
+        try { games.push({ code: r.code, version: asInt(r.version), state: JSON.parse(r.state) }); }
+        catch { return { error: 'db' }; }
+      }
+      return { games };
+    },
+
     async deleteStaleSetup(beforeIso) {
       await db.prepare('DELETE FROM games WHERE status = ? AND created_at < ?').bind('setup', beforeIso).run();
     },

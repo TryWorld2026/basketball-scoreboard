@@ -1,4 +1,4 @@
-import { handleGames } from './handler.mjs';
+import { handleGames, advanceDueGames } from './handler.mjs';
 import { createD1Store } from './store-d1.mjs';
 
 // 控制端是可以被诱导点击的（UI redressing：把遥控器 iframe 嵌进陌生页面，
@@ -24,5 +24,13 @@ export default {
     }
     // 其余交给静态资源绑定（含 SPA 回退）
     return withSecurity(await env.ASSETS.fetch(request));
+  },
+
+  // cron 每分钟：把「时钟已归零但没人上报」的比赛推进一步。
+  // 到点推进不能只依赖记分员的手机在线——锁屏、杀后台、被叫走、没电，
+  // 任何一样都发生的时候，比赛不该卡在 00:00。
+  async scheduled(event, env, ctx) {
+    if (!env.DB) return;
+    ctx.waitUntil(advanceDueGames(createD1Store(env.DB)).catch(() => {}));
   },
 };

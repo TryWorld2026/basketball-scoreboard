@@ -333,6 +333,24 @@ const mutants = [
     to: 'api(`/api/game?action=log`)',
     suite: 'mobile', mustRedOn: '数据卡页请求 action=log 并带上房间码',
   },
+  {
+    name: 'M41 到点推进被移除（记分员手机不在场，比赛卡在 00:00）',
+    file: HANDLER,
+    from: `    const result = applyAction(game.state, action, nowIso, nowMs);
+    if (result.error) continue;
+    if (JSON.stringify(result.state) === JSON.stringify(game.state)) continue; // 没到点`,
+    to: `    const result = { state: game.state };
+    if (result.error) continue;
+    if (JSON.stringify(result.state) === JSON.stringify(game.state)) continue; // 没到点`,
+    suite: 'attack', mustRedOn: '到点的比赛被 cron 推进到节间休息',
+  },
+  {
+    name: 'M42 到点推进的无变化闸门被移除（每分钟给所有 live 比赛白写库涨版本）',
+    file: HANDLER,
+    from: `    if (JSON.stringify(result.state) === JSON.stringify(game.state)) continue; // 没到点`,
+    to: `    if (JSON.stringify(result.state) === JSON.stringify(game.state)) { /* MUTANT: 闸门删除 */ }`,
+    suite: 'attack', mustRedOn: '没到点的比赛不被 cron 写库（不涨版本）',
+  },
 ];
 
 const runSuite = (which) => {

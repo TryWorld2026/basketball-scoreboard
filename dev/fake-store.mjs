@@ -55,6 +55,15 @@ export function createFakeStore(seed = []) {
       const entries = [...(logs.get(code) || [])].sort((a, b) => b.seq - a.seq).slice(0, limit);
       return { entries: structuredClone(entries) };
     },
+
+    // 到点推进用：和 D1 适配器同语义——只捞状态列是 live 的行
+    async listLiveGames() {
+      const games = [];
+      for (const row of rows.values()) {
+        if (row.status === 'live') games.push({ code: row.code, version: row.version, state: structuredClone(row.state) });
+      }
+      return { games };
+    },
     async recordReceipt(code, expectedVersion, nonce) {
       const row = rows.get(code);
       if (!row || row.version !== expectedVersion) return { changed: false };

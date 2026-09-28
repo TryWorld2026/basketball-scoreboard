@@ -87,6 +87,44 @@ async function readBody(request) {
 
 const dbError = () => json({ error: 'database_request_failed' }, 503);
 
+/**
+ * 服务端到点推进（cron 每分钟触发一次）：时钟归零不再依赖记分员的手机在线。
+ * 之前控制端一关，节间休息/暂停倒计时就永远停在 00:00——现场记分员被叫走、
+ * 手机锁屏、杀后台、没电，比赛就卡死在那儿。
+ *
+ * 实现要点：
+ * - 不走独立的分支逻辑，直接调和服务端 applyAction 同一套规则（clock_zero），
+ *   和记分员自己上报的行为逐字一致；「无变化不写库」就是幂等闸门。
+ * - 和记分员的上报撞车时，CAS 保证只有一个生效，另一个按冲突跳过——
+ *   不会重复进节。
+ * - 审计 actor 记 'cron'，动作带 by:'server-cron'，和人工操作可分。
+ */
+export async function advanceDueGames(store, nowMs = Date.now()) {
+  const list = await store.listLiveGames();
+  if (list.error) return { error: 'db' };
+  let advanced = 0;
+  for (const game of list.games) {
+    const nowIso = new Date(nowMs).toISOString();
+    const action = { type: 'clock_zero', by: 'server-cron' };
+    const result = applyAction(game.state, action, nowIso, nowMs);
+    if (result.error) continue;
+    if (JSON.stringify(result.state) === JSON.stringify(game.state)) continue; // 没到点
+    const patch = { state: result.state, status: result.state.status, updated_at: nowIso };
+    const score = (st) => `${st.teams[0].score}:${st.teams[1].score}`;
+    const logEntry = {
+      actor: 'cron',
+      action: JSON.stringify(action),
+      before_score: score(game.state),
+      after_score: score(result.state),
+      clock_ms: Math.round(deriveRemaining(result.state.clock, nowMs)),
+      at: nowIso,
+    };
+    const written = await store.casUpdateGame(game.code, game.version, patch, logEntry);
+    if (written?.changed) advanced += 1; // 版本被记分员抢先推过：跳过，下一次 cron 自然续上
+  }
+  return { advanced };
+}
+
 async function handleGet(store, limiters, request, params) {
   const code = String(params.get('code') || '').toUpperCase();
   if (!CODE_RE.test(code)) return throttled(limiters, request, json({ error: 'invalid_code' }, 400));

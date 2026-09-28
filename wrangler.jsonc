@@ -20,5 +20,8 @@
       "database_name": "scoreboard-db",
       "database_id": "74d5c5c9-b640-4e80-9281-befd3d884528"
     }
-  ]
+  ],
+  "triggers": {
+    "crons": ["* * * * *"]
+  }
 }
