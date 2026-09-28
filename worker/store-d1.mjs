@@ -2,6 +2,9 @@
 // 并发正确性靠 SQLite 的 `UPDATE ... WHERE version = ?` 影响行数判定（CAS）。
 
 const asInt = (v) => (typeof v === 'number' ? v : Number(v));
+const newReceiptId = () => (crypto.randomUUID
+  ? crypto.randomUUID()
+  : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 14)}`);
 
 export function createD1Store(db) {
   return {
@@ -55,9 +58,10 @@ export function createD1Store(db) {
 
     async recordReceipt(code, expectedVersion, nonce, createdAt) {
       let result;
+      const receiptId = newReceiptId();
       try {
-        result = await db.prepare('INSERT OR IGNORE INTO action_receipts (code, nonce, created_at) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM games WHERE code = ? AND version = ?)')
-          .bind(code, nonce, createdAt, code, expectedVersion).run();
+        result = await db.prepare('INSERT OR IGNORE INTO action_receipts (code, nonce, created_at, receipt_id) SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM games WHERE code = ? AND version = ?)')
+          .bind(code, nonce, createdAt, receiptId, code, expectedVersion).run();
       } catch { return { error: 'db' }; }
       const changed = asInt(result?.meta?.changes ?? 0);
       if (changed === 1) return { changed: true };
@@ -66,12 +70,13 @@ export function createD1Store(db) {
 
     async casUpdateGameWithReceipt(code, expectedVersion, patch, nonce) {
       let results;
+      const receiptId = newReceiptId();
       try {
         results = await db.batch([
-          db.prepare('INSERT OR IGNORE INTO action_receipts (code, nonce, created_at) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM games WHERE code = ? AND version = ?)')
-            .bind(code, nonce, patch.updated_at, code, expectedVersion),
-          db.prepare('UPDATE games SET status = ?, version = ?, state = ?, updated_at = ? WHERE code = ? AND version = ? AND EXISTS (SELECT 1 FROM action_receipts WHERE code = ? AND nonce = ?)')
-            .bind(patch.status, expectedVersion + 1, JSON.stringify(patch.state), patch.updated_at, code, expectedVersion, code, nonce),
+          db.prepare('INSERT OR IGNORE INTO action_receipts (code, nonce, created_at, receipt_id) SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM games WHERE code = ? AND version = ?)')
+            .bind(code, nonce, patch.updated_at, receiptId, code, expectedVersion),
+          db.prepare('UPDATE games SET status = ?, version = ?, state = ?, updated_at = ? WHERE code = ? AND version = ? AND EXISTS (SELECT 1 FROM action_receipts WHERE code = ? AND nonce = ? AND receipt_id = ?)')
+            .bind(patch.status, expectedVersion + 1, JSON.stringify(patch.state), patch.updated_at, code, expectedVersion, code, nonce, receiptId),
         ]);
       } catch {
         return { error: 'db' };

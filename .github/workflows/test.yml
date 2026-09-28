@@ -28,3 +28,19 @@ jobs:
       # 七张网跑在内存假库与静态源码上，不需要 Cloudflare 凭据
       - name: Smoke / attack probes / mutation gate
         run: npm test
+
+  local-d1:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # 只打本地 Wrangler + 本地 D1；不需要、不读取任何 Cloudflare 凭据，也不碰生产库。
+      - name: Local D1 / real Worker HTTP gate
+        run: npm run test:e2e

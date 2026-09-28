@@ -125,32 +125,33 @@
 | `/room/:code/display` | 大屏 | |
 | `/room/:code/card` | 数据卡 | 永久可访问 |
 
-SPA 模式（`prepare_site.spa: true`），History API 路由，深链刷新不 404。避开平台命名空间（`/functions`、`/api` 等）。
+SPA 模式由 Workers Assets 的 `not_found_handling: single-page-application` 提供，History API 路由，深链刷新不 404；`/api/*` 由 Worker 优先处理，其余请求交给静态资源。
 
 ---
 
 ## 6. 数据模型
 
-单表 `games`，整场状态一个 JSON 文档（读-改-写 + 版本号 CAS 的模型下，规范化拆表只会增加跨请求事务问题）：
+主表 `games` 仍是一场比赛一行、整场状态一个 JSON 文档（读-改-写 + 版本号 CAS 的模型下，规范化拆表只会增加跨请求事务问题）；`action_receipts` 是与比赛行级联的幂等回执辅表：
 
 ```sql
 create table games (
   code        text primary key,            -- 4位房间码（字符集去 0O1I）
   status      text not null default 'setup',-- setup|live|break|timeout|finished
   version     integer not null default 0,   -- 每次写 +1，CAS 用
-  state       json  not null,               -- 见下（SQLite 存 JSON 文本）
-  created_at  timestamptz not null default now(),
-  updated_at  timestamptz not null default now(),
+  state       text not null,               -- 见下（SQLite 存 JSON 文本）
+  created_at  text not null,               -- ISO-8601 UTC 文本
+  updated_at  text not null,
   controller_hash text                      -- 控制凭证的 SHA-256（migrations/0002；NULL = 迁移前的老行，只读）
 );
 -- 预留赛事扩展：以后加 tournament_id 列，不动结构
 
--- 幂等回执（migrations/0002）：nonce 落地过就记一行，与状态写入同一个批处理。
+-- 幂等回执（migrations/0002 + 0003）：nonce 落地过就记一行，与状态写入同一个批处理。
 -- 去重窗口不限长度，随比赛行级联删除（半途放弃局清理时一起走）。
 create table action_receipts (
   code        text not null references games(code) on delete cascade,
   nonce       text not null,
   created_at  text not null,
+  receipt_id  text unique,                 -- migrations/0003：本次 INSERT 的 attempt marker；老回执可为 NULL
   primary key (code, nonce)
 );
 ```
@@ -196,10 +197,10 @@ create table action_receipts (
 - **`playerId` 类型门禁（对抗审查补）**：只接受字符串。`String(['张三']) === '张三'` 这种能穿透 JSON 的脏数据会被静默变成合法球员名，进而把分记到人头上。
 - **24 秒不是装饰（对抗审查补）**：`shot_reset` / `possession` 在规则层一直存在却没有 UI 入口，等于没实现；同时进球后旧实现把 24 秒停死，而 `clock_start` 又因"已在跑"被拒，导致它永久冻结。现在开球即走、进球归满并继续走、归零蜂鸣自动重置，控制端有「↻ 24秒」和「⇄ 交换球权」两个入口。
 - **撤销必须冻结时钟（对抗审查补）**：撤销快照若原样存绝对 `since`，撤销一次"停表"会让停表那段真实时间被当成比赛时间消耗掉——时钟在记分员看不见的地方向下跳。现在快照把运行中的时钟冻结成那一刻的显示值，撤销只回退数据，是否继续走由记分员显式按「开始」。
-- **失败限流（对抗审查补）**：房间码即访问能力，4 位码可被遍历。按 IP 只统计失败请求（房间不存在/参数非法/冲突），正常轮询不计次；进程内计数，属尽力而为（见 README 已知边界）。
+- **失败限流（对抗审查补）**：房间码可被遍历。按 IP 只统计失败请求（房间不存在/参数非法/冲突/凭证不符），正常轮询不计次；进程内计数，属尽力而为（见 README 已知边界）。
 - **半途放弃局清理（对抗审查补）**：只清 `setup` 会让"建过赛、打了几下就走人"的房间永久留在库里。现在建赛时顺带清掉超过 7 天无写入的 `live/break/timeout` 行；`finished` 永久保留（数据卡链接要能长期打开）。
 - **乱序响应保护（对抗审查补）**：轮询 GET 可能比刚发出的 apply 响应更晚到达。前端按 `version` 丢弃旧快照，否则比分会瞬态闪回。
-- **幂等键（对抗审查补，2026-09-28 加固）**：户外丢包时客户端会补发同一意图，服务端按 `nonce` 去重——回执落 `action_receipts` 表，与状态写入同一个批处理（`INSERT OR IGNORE` 回执 + `UPDATE ... WHERE version` 双门禁），重复意图只记一次且不涨版本。去重窗口不限长度：旧实现把 nonce 塞进比赛 JSON 只留最近 30 条，双记分员场景下超过 30 次后续写入，补发就被挤出窗口、同一意图记两次分。没有这一条，一次信号抖动就能凭空多算 2 分。
+- **幂等键（对抗审查补，2026-09-28 加固）**：户外丢包时客户端会补发同一意图，服务端按 `nonce` 去重——回执落 `action_receipts` 表，与状态写入同一个批处理；`receipt_id` 证明 UPDATE 使用的是**本次 INSERT** 的回执，旧回执不能满足 UPDATE。重复意图只记一次且不涨版本。去重窗口不限长度：旧实现把 nonce 塞进比赛 JSON 只留最近 30 条，双记分员场景下超过 30 次后续写入，补发就被挤出窗口、同一意图记两次分。没有这一条，一次信号抖动就能凭空多算 2 分。
 - **模式门禁（对抗审查补）**：记分/记犯规只在 `clock.mode==='game'` 时接受——休息期按 +3 会静默记进下一节的流水，属于数据污染；叫暂停还要求 `status==='live'`，否则未开打就能烧掉一次暂停。
 - **无变化不写库**：应用后状态与之前等价（如重复上报归零）直接返回当前状态，不涨版本，避免多端同时上报造成无意义 CAS 冲突。
 - **休息中按"下一节"= 提前结束休息**（班赛休息期常提前开打），不再报错。
@@ -232,10 +233,10 @@ create table action_receipts (
 **部署平台变更记录（2026-09-24）**：首版按 Qoder Sites（静态 + Edge Function + Supabase 适配器）实现并本地验证通过，但平台侧建站请求持续返回通用失败，云资源无法分配；同日改投 **Cloudflare Workers + D1** 并完成部署与线上验证。规则引擎与前端一行未动，只替换了数据访问层——这验证了当初"handler 只依赖注入的 store 接口"的分层是对的。
 
 - **前端**：纯静态 SPA（原生 ES modules，无框架无构建），目录 `public/`，由 Workers Assets 托管，SPA 回退用 `not_found_handling: single-page-application`。
-- **服务端**：`worker/index.js` 为 Workers 入口，`/api/*` 走业务 handler，其余交给静态资源绑定。业务层 `worker/handler.mjs` 只依赖 store 接口（`getGame / insertGame / casUpdateGame / deleteStaleSetup`）。
-- **数据库**：Cloudflare D1（SQLite）。整场状态一个 JSON 文本列 + `version` 列；并发写用 `UPDATE ... WHERE code = ? AND version = ?` 的**影响行数**判定 CAS，这是真实 SQL 语义，不是内存假库的模拟。
+- **服务端**：`worker/index.js` 为 Workers 入口，`/api/*` 走业务 handler，其余交给静态资源绑定。业务层 `worker/handler.mjs` 只依赖 store 接口（`getGame / insertGame / casUpdateGame / casUpdateGameWithReceipt / deleteStaleSetup / deleteAbandoned`）。
+- **数据库**：Cloudflare D1（SQLite）。整场状态一个 JSON 文本列 + `version` 列；幂等回执在 `action_receipts` 辅表；并发写用 `UPDATE ... WHERE code = ? AND version = ?` 的**影响行数**判定 CAS，这是真实 SQL 语义，不是内存假库的模拟。
 - **客户端能力**：WakeLock、navigator.vibrate、WebAudio 合成蜂鸣（归零长鸣/进节双响/暂停短促）、canvas 导出 PNG。
-- **本地开发**：`wrangler dev`（本地 D1 仿真）跑真实链路；`npm test` 三张网跑内存假库，零云依赖。
+- **本地开发**：`npm run test:e2e` 自动应用本地迁移、启动 `wrangler dev`，用真实 HTTP + 本地 D1 跑 `dev/d1-check.mjs`；`npm test` 七张网跑内存假库/静态源码，零云依赖。
 
 ## 10. 验收标准与实测结果
 
@@ -248,7 +249,7 @@ create table action_receipts (
 7. 结束 → 数据卡数字与过程一致 → 存 PNG 成功 —— 实测通过（1080×1440 / 168KB）
 8. 断网操作排队、恢复补发不丢分且不重复计分 —— 幂等键实测（请求体带 nonce）
 9. 错误房间码 → 友好提示 —— 实测通过
-10. 部署后真实请求验证 —— **已完成**：`node dev/d1-check.mjs <线上地址>` 对 Cloudflare 生产环境 27/27 通过（含真 SQL CAS、幂等 noop、并发双写、SPA 深链、no-store），并在浏览器中确认跨进程写入经轮询反映到大屏
+10. 本地真实请求验证 —— **已完成**：`npm run test:e2e` 对本地 Wrangler + D1 28/28 通过（含真 SQL CAS、durable receipt 迟到补发、并发双写、SPA 深链、no-store、匿名读写边界）；远程 `d1-check` 默认拒绝，需显式设置 `D1_CHECK_ALLOW_REMOTE=1`。
 
 **测试网（本地，`npm test` 七张）**：`node dev/smoke.mjs` 34 项主流程；`node dev/attack.mjs` 102 项对抗探针（幂等、并发、跳节滥用、类型强制、不可逆性、无界增长、注入面、协议健壮性、胜负判定、控制凭证对抗面、幂等窗口硬边界）；`dev/store.mjs` 39 项前端仓库层（含离线队列边界、凭证只上写路径、大屏 stale 冻结）；`dev/parity.mjs` 49 项双端时钟镜像一致性；`dev/mobile.mjs` 31 项移动端静态断言；`dev/display.mjs` 16 项大屏状态判定与接线；`dev/mutate.mjs` 35 个变异体全部被击杀（证明每条断言都不是空断言）。
 

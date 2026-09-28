@@ -13,10 +13,10 @@
 ## File map
 
 - `worker/rules.mjs`, `worker/handler.mjs`, `worker/store-d1.mjs`, `worker/index.js`: authorization, safe state transitions, durable idempotency, request bounds.
-- `migrations/0002_control_auth.sql`: add nullable controller-token hash for existing rows (legacy active games fail closed; finished cards stay readable).
+- `migrations/0002_control_auth.sql`, `migrations/0003_receipt_attempt_id.sql`: controller-token hash and durable receipt attempt marker (legacy active games fail closed; finished cards stay readable).
 - `dev/fake-store.mjs`, `dev/smoke.mjs`, `dev/attack.mjs`, `dev/store.mjs`, `dev/parity.mjs`, `dev/mutate.mjs`: regression and mutation coverage.
 - `public/js/api.js`, `public/js/store.js`, `public/js/views/{home,room,control,display}.js`: credential handoff, offline queue rules, display stale/error behavior.
-- `dev/d1-check.mjs`, `.github/workflows/test.yml`, `package.json`: real SQLite/D1 and browser CI coverage.
+- `dev/d1-check.mjs`, `dev/e2e-local.mjs`, `.github/workflows/test.yml`, `package.json`: real SQLite/D1 and CI coverage.
 - `README.md`, `CONTRIBUTING.md`, `docs/plans/basketball-scoreboard-design.md`: current operational behavior and deployment/migration guidance.
 
 ## Task 1: Define and test write authorization
@@ -51,20 +51,20 @@
 
 ## Task 5: Add real integration gates
 
-- [ ] Make `dev/d1-check.mjs` safe for automated local D1 execution and include auth, migration, CAS, idempotency, and anonymous-read checks.
-- [ ] Add a repeatable Wrangler local-D1 integration command and CI job.
-- [ ] Add browser-level coverage for create → room → control auth, display read-only behavior, stale/error UI, and key offline queue feedback.
-- [ ] Keep credentials and production D1 out of CI; never run write probes against production by default.
+- [x] Make `dev/d1-check.mjs` safe for automated local D1 execution and include auth, migration, CAS, idempotency, and anonymous-read checks.
+- [x] Add a repeatable Wrangler local-D1 integration command and CI job.
+- [ ] Add browser-level coverage for create → room → control auth, display read-only behavior, stale/error UI, and key offline queue feedback.（未做：项目未安装 Playwright；当前用真实 Worker+D1 门禁、DOM-free store/display 测试和静态接线断言覆盖，浏览器自动化可作为后续独立变更）
+- [x] Keep credentials and production D1 out of CI; never run write probes against production by default.
 
 ## Task 6: Align operational documentation
 
-- [ ] Update README/CONTRIBUTING with control-link handling, legacy-game migration behavior, offline guarantees, test commands, and current CI coverage.
-- [ ] Mark the design document as implemented; remove stale paths/platform descriptions and correct test/CI counts.
-- [ ] Verify documentation references and commands against the actual scripts/configuration.
+- [x] Update README/CONTRIBUTING with control-link handling, legacy-game migration behavior, offline guarantees, test commands, and current CI coverage.
+- [x] Mark the design document as implemented; remove stale paths/platform descriptions and correct test/CI counts.
+- [x] Verify documentation references and commands against the actual scripts/configuration.
 
 ## Verification
 
-- [ ] `npm test`
-- [ ] Local Wrangler/D1 migration and `dev/d1-check.mjs` against the local Worker.
-- [ ] Headless browser tests for the named end-to-end flows.
-- [ ] `git diff --check` and review final diff for accidental changes/secrets.
+- [x] `npm test`
+- [x] Local Wrangler/D1 migration and `dev/d1-check.mjs` against the local Worker (`npm run test:e2e`, 28/28).
+- [ ] Headless browser tests for the named end-to-end flows（未做：同 Task 5 浏览器覆盖项）。
+- [x] `git diff --check` and review final diff for accidental changes/secrets.

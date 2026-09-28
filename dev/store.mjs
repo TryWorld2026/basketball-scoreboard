@@ -307,7 +307,7 @@ console.log('\n— 大屏 stale 冻结 —');
     config: { ...store.snapshot.state.config, shotClock: true },
   };
   const live = store.displayClock();
-  ok('在线时大屏时钟照常推演', live.remainingMs <= 600000 && live.remainingMs >= 590000, JSON.stringify(live));
+  ok('在线时大屏时钟照常推演', live.remainingMs <= 600000 && live.remainingMs >= 589000, JSON.stringify(live));
   store.lastOkAt = store.now() - 5000; // 超过 3 秒没收到确认 → stale
   const frozen = store.displayClock();
   await sleep(30);

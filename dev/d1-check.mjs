@@ -1,6 +1,18 @@
-// D1 / 真实 HTTP 链路验证：打的是部署后的 Worker + D1 SQL，不是内存假库。
-// 用法：node dev/d1-check.mjs [baseUrl]   默认 http://127.0.0.1:8788
+// D1 / 真实 HTTP 链路验证：打的是 Worker + D1 SQL，不是内存假库。
+// 默认只允许本地地址，避免 CI/误操作把写探针打到生产。
+// 本地：node dev/d1-check.mjs [baseUrl]   默认 http://127.0.0.1:8788
+// 远程（显式确认）：D1_CHECK_ALLOW_REMOTE=1 node dev/d1-check.mjs https://<domain>
 const BASE = (process.argv[2] || 'http://127.0.0.1:8788').replace(/\/$/, '');
+let baseUrl;
+try { baseUrl = new URL(BASE); } catch {
+  console.error(`非法 baseUrl：${BASE}`);
+  process.exit(2);
+}
+const localHost = ['127.0.0.1', 'localhost', '::1'].includes(baseUrl.hostname);
+if (!localHost && process.env.D1_CHECK_ALLOW_REMOTE !== '1') {
+  console.error('拒绝远程写探针：本脚本默认只打本地 Worker + D1；如确需远程验证，请显式设置 D1_CHECK_ALLOW_REMOTE=1。');
+  process.exit(2);
+}
 const API = `${BASE}/api/game`;
 
 let pass = 0; let fail = 0; const bugs = [];
@@ -70,7 +82,7 @@ console.log('\n— 计分与幂等（真 SQL CAS）—');
   const r2 = await apply(code, { type: 'score', team: 0, points: 2, playerId: '赵六', nonce }, version);
   ok('同 nonce 重发被幂等拦下（noop）', r2.json?.noop === true && r2.json?.state?.teams?.[0]?.score === 2, JSON.stringify({ noop: r2.json?.noop, score: r2.json?.state?.teams?.[0]?.score }));
   // 回执落表后，中间隔着别的写入，补发仍然只算一次（旧实现只留最近 30 个 nonce，这里会双计）
-  const mid = await apply(code, { type: 'foul', team: 1 }, version);
+  const mid = await apply(code, { type: 'foul', team: 0 }, version);
   version = mid.json.version;
   const late = await apply(code, { type: 'score', team: 0, points: 2, playerId: '赵六', nonce }, version);
   ok('隔着后续写入的迟到补发仍只计一次（durable receipt）', late.json?.noop === true && late.json?.state?.teams?.[0]?.score === 2, JSON.stringify({ noop: late.json?.noop, score: late.json?.state?.teams?.[0]?.score }));
