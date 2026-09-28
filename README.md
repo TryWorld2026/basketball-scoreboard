@@ -114,7 +114,7 @@ Cloudflare D1   games 表：一场比赛一行，整场状态一个 JSON + versi
 2. **时钟不跑在服务端。** 只存 `running + since + remainingMs`，任何设备打开都能自己推算当前剩余——刷新、换手机、断网重连，时钟都不丢。
 3. **1 秒轮询，不做 WebSocket。** 比分晚一秒出现毫无感知（真实记分牌本来就是裁判吹哨后才变），换来零长连接基础设施、断线自动恢复。
 
-完整设计推演（含逐条决策理由与异常状态矩阵）见 [`docs/plans/basketball-scoreboard-design.md`](docs/plans/basketball-scoreboard-design.md)。
+完整设计推演（含逐条决策理由与异常状态矩阵）见 [`docs/plans/basketball-scoreboard-design.md`](docs/plans/basketball-scoreboard-design.md)；项目交接 / 给下一个接手的开发（人或 AI）的现状快照与运维手册见 [`docs/handoff-2026-09-29.md`](docs/handoff-2026-09-29.md)。
 
 ## 规则默认值
 
