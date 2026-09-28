@@ -1,6 +1,6 @@
 // 大屏展示端：只读、零操作、三米外看清。
 import { GameStore } from '../store.js';
-import { formatClock } from '../clock.js';
+import { displayPhase, formatClock } from '../clock.js';
 import { Led } from '../led.js';
 import { sounds, primeAudio } from '../audio.js';
 import { navigate } from '../router.js';
@@ -41,12 +41,18 @@ export default {
       h('div', { class: 'd-bottom' }, bonusEl, possEl));
 
     const overlay = h('div', { class: 'd-overlay', hidden: true });
+    const waitText = h('p', { class: 'muted' });
     const waitPanel = h('div', { class: 'd-wait' },
       h('p', { class: 'd-wait-code' }, code),
-      h('p', { class: 'muted' }, '等待开赛——记分员在手机上点击「开始」即进入比赛'),
+      waitText,
       h('a', { class: 'ghost', href: `/room/${code}/control`, 'data-link': true }, '打开控制端'));
+    // 房间不存在/已归档：不能停在「等待开赛」——那会让一个打错的房间码假装比赛还没开始
+    const errPanel = h('div', { class: 'd-wait d-err', hidden: true },
+      h('p', { class: 'd-err-title' }, '房间不存在或已归档'),
+      h('p', { class: 'muted' }, '请检查大屏链接里的 4 位房间码'),
+      h('a', { class: 'ghost', href: '/', 'data-link': true }, '回到首页'));
 
-    stage.append(board, overlay, waitPanel);
+    stage.append(board, overlay, waitPanel, errPanel);
 
     function buildPanels(s) {
       stage.style.setProperty('--tc0', s.teams[0].color);
@@ -57,21 +63,38 @@ export default {
     }
 
     function paint() {
-      const s = store.state;
-      if (!s) return;
-      buildPanels(s);
-      const d = store.clock();
-      const finished = store.status === 'finished';
+      const phase = displayPhase(store);
+      errPanel.hidden = phase !== 'error';
+      if (phase === 'error' || phase === 'loading' || phase === 'reconnecting') {
+        board.hidden = true;
+        overlay.hidden = true;
+        waitPanel.hidden = false;
+        waitText.textContent = phase === 'loading' ? '连接中…'
+          : phase === 'reconnecting' ? '信号弱，正在重连…'
+            : '房间不存在或已归档';
+        connEl.textContent = phase === 'loading' ? '● 连接中' : '● 离线';
+        connEl.classList.toggle('weak', phase !== 'loading');
+        return;
+      }
 
-      waitPanel.hidden = !(store.status === 'setup' && !finished);
-      board.hidden = store.status === 'setup' && !finished;
+      const s = store.state;
+      buildPanels(s);
+      // stale 时用冻结时钟：服务端可能已被停表/跳节，本地继续推就是假时间
+      const d = store.displayClock();
+      const finished = store.status === 'finished';
+      const stale = store.stale();
+      const setup = phase === 'setup';
+
+      waitPanel.hidden = !setup;
+      if (setup) waitText.textContent = '等待开赛——记分员在手机上点击「开始」即进入比赛';
+      board.hidden = setup;
 
       scoreA.setText(String(s.teams[0].score));
       scoreB.setText(String(s.teams[1].score));
       const tenths = d.mode === 'game' && d.remainingMs < 60000 && !finished;
-      clockLed.setText(finished ? formatClock(s.clock.remainingMs) : formatClock(d.remainingMs, tenths), { colonBlink: d.running });
+      clockLed.setText(finished ? formatClock(s.clock.remainingMs) : formatClock(d.remainingMs, tenths), { colonBlink: d.running && !stale });
       if (s.config.shotClock) {
-        const sh = store.shot();
+        const sh = store.displayShot();
         shotLed.setText(String(Math.ceil((sh?.remainingMs ?? 0) / 1000)).padStart(2, '0'));
         shotLed.el.classList.toggle('zero', !!sh?.zero);
       }
@@ -105,7 +128,7 @@ export default {
           h('p', { class: 'd-ov-sub' }, d.mode === 'timeout' ? s.teams[s.clock.timeoutTeam ?? 0].name : `第 ${d.period} 节即将开始`));
       }
 
-      // 归零提示音与红闪（大屏只响不写，写由控制端负责）
+      // 归零提示音与红闪（大屏只响不写，写由控制端负责；stale 冻结期不响——那可能是服务端已经不认的时间）
       if (d.zero && !zeroHandled) {
         zeroHandled = true;
         sounds.buzzer();
@@ -117,8 +140,8 @@ export default {
       if (!d.zero) zeroHandled = false;
 
       // 连接状态
-      connEl.textContent = store.stale() ? `信号弱 · 最后更新 ${new Date(store.lastOkAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}` : '● 直播';
-      connEl.classList.toggle('weak', store.stale());
+      connEl.textContent = stale ? `信号弱 · 最后更新 ${new Date(store.lastOkAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}` : '● 直播';
+      connEl.classList.toggle('weak', stale);
 
       if (finished) {
         if (!finishedAt) { finishedAt = Date.now(); }

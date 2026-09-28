@@ -28,6 +28,17 @@ export function periodNextFinishes(s) {
     && s.teams[0].score !== s.teams[1].score;
 }
 
+// 大屏该渲染哪个画面。纯判定（不碰 DOM），display.js 只负责照着画——
+// 房间不存在时不能停在「等待开赛」，那会让一个打错的房间码假装比赛还没开始。
+// dev/display.mjs 逐场景钉这份判定。
+export function displayPhase(store) {
+  if (store.fatal) return 'error';
+  if (!store.state) return store.loading ? 'loading' : 'reconnecting';
+  if (store.status === 'setup') return 'setup';
+  if (store.status === 'finished') return 'finished';
+  return store.stale() ? 'stale' : 'live';
+}
+
 export function formatClock(ms, tenths = false) {
   const total = Math.max(0, ms);
   const m = Math.floor(total / 60000);

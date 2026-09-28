@@ -74,6 +74,27 @@ export class GameStore {
   clock() { return this.state ? deriveClock(this.state, this.now()) : null; }
   shot() { return this.state ? deriveShot(this.state, this.now()) : null; }
 
+  /**
+   * 大屏专用时钟：超过 3 秒没收到服务端确认（stale）时冻结在最后可信值，不再往前推。
+   * 为什么必须冻：服务端可能已被记分员停表/跳节，本地继续推就是在播一个服务端已经不认的时间——
+   * 观众看到的是假时间。冻结 + 「信号弱」角标才是诚实降级；恢复后快照刷新，下一次 paint 自然回真值。
+   * 冻结期间强制 zero:false——stale 的归零不许触发蜂鸣和红闪。
+   */
+  displayClock() {
+    const d = this.clock();
+    if (!d) return null;
+    if (!this.stale()) { this._frozenClockMs = null; return d; }
+    if (this._frozenClockMs == null) this._frozenClockMs = d.remainingMs;
+    return { ...d, remainingMs: this._frozenClockMs, zero: false };
+  }
+  displayShot() {
+    const s = this.shot();
+    if (!s) return null;
+    if (!this.stale()) { this._frozenShotMs = null; return s; }
+    if (this._frozenShotMs == null) this._frozenShotMs = s.remainingMs;
+    return { ...s, remainingMs: this._frozenShotMs, zero: false };
+  }
+
   subscribe(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
   emit() { for (const fn of [...this.listeners]) fn(this); }
 

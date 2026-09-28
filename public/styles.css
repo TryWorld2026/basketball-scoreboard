@@ -124,6 +124,10 @@ select.inp { appearance: none; }
 /* 房间页的无凭证说明（普通文本，不吃按钮版 .small 的 44px 命中区） */
 .cred-hint { margin: .6rem 0 0; font-size: .85rem; color: var(--muted); line-height: 1.5; }
 
+/* ---------- 大屏：房间不存在 ---------- */
+.d-err { border: 1px solid rgba(255, 143, 160, .4); border-radius: 16px; padding: 1.4rem 1.8rem; }
+.d-err .d-err-title { font-size: clamp(1.3rem, 3vw, 2rem); font-weight: 900; color: #FF8FA0; margin: 0 0 .4rem; }
+
 /* ---------- 控制端：待发送队列 ---------- */
 .pending {
   margin: .6rem .9rem 0; padding: .6rem .8rem;

@@ -282,6 +282,21 @@ const mutants = [
     to: `        this.queue = parsed.filter((a) => a && typeof a.type === 'string').slice(0, 50);`,
     suite: 'store', mustRedOn: '历史队列里的撤销/终局被滤掉（补发时刻已错）',
   },
+  {
+    name: 'M34 大屏 stale 冻结被移除（信号弱时继续推服务端已经不认的时间）',
+    file: STOREJS,
+    from: `    if (this._frozenClockMs == null) this._frozenClockMs = d.remainingMs;
+    return { ...d, remainingMs: this._frozenClockMs, zero: false };`,
+    to: `    return d;`,
+    suite: 'store', mustRedOn: 'stale 时大屏时钟冻结在最后可信值（不推假时间）',
+  },
+  {
+    name: 'M35 displayPhase 丢掉错误态（房间不存在假装等待开赛）',
+    file: CLOCKJS,
+    from: `  if (store.fatal) return 'error';`,
+    to: `  /* MUTANT: 错误态判定删除 */`,
+    suite: 'display', mustRedOn: '房间不存在 → error（不假装等待开赛）',
+  },
 ];
 
 const runSuite = (which) => {

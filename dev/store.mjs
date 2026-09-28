@@ -290,5 +290,36 @@ console.log('\n— 旧版本队列过滤 —');
   ok('历史队列里的撤销/终局被滤掉（补发时刻已错）', store.queue.length === 2 && store.queue.every((a) => a.type === 'score' || a.type === 'foul'), JSON.stringify(store.queue.map((a) => a.type)));
 }
 
+// ---------- 14. 大屏时钟：stale 冻结在最后可信值，恢复回真值 ----------
+console.log('\n— 大屏 stale 冻结 —');
+{
+  mem.clear();
+  fakeServer();
+  globalThis.location = { hash: '', pathname: '/room/AB23/display', search: '' };
+  globalThis.history = { replaceState: () => {} };
+  const store = new GameStore('AB23');
+  await store._tick();
+  // 伪造一场正在走表的比赛（since 用 store.now() 保持同一时间基）
+  store.snapshot.state = {
+    ...store.snapshot.state,
+    clock: { mode: 'game', period: 1, running: true, since: new Date(store.now() - 10000).toISOString(), remainingMs: 600000 },
+    shot: { running: true, since: new Date(store.now() - 10000).toISOString(), remainingMs: 24000 },
+    config: { ...store.snapshot.state.config, shotClock: true },
+  };
+  const live = store.displayClock();
+  ok('在线时大屏时钟照常推演', live.remainingMs <= 600000 && live.remainingMs >= 590000, JSON.stringify(live));
+  store.lastOkAt = store.now() - 5000; // 超过 3 秒没收到确认 → stale
+  const frozen = store.displayClock();
+  await sleep(30);
+  const frozenAgain = store.displayClock();
+  ok('stale 时大屏时钟冻结在最后可信值（不推假时间）', frozen.remainingMs === frozenAgain.remainingMs && frozen.zero === false,
+    JSON.stringify({ a: frozen.remainingMs, b: frozenAgain.remainingMs }));
+  const frozenShot = store.displayShot();
+  ok('stale 时 24 秒同步冻结且不报违例', frozenShot.zero === false && frozenShot.remainingMs > 0, JSON.stringify(frozenShot));
+  store.lastOkAt = store.now(); // 重连恢复
+  const recovered = store.displayClock();
+  ok('恢复后大屏时钟回到推演真值', recovered.remainingMs < frozen.remainingMs, JSON.stringify({ frozen: frozen.remainingMs, recovered: recovered.remainingMs }));
+}
+
 console.log(`\n通过 ${pass} / 失败 ${fail}`);
 process.exit(fail ? 1 : 0);

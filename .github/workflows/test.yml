@@ -1,7 +1,7 @@
 name: Test
 
 # 部署由 Cloudflare Workers Builds 负责（GitHub 侧不存任何凭据）。
-# 这里只做一件事：把三张测试网当合并门禁跑一遍。
+# 这里只做一件事：把七张测试网当合并门禁跑一遍。
 
 on:
   push:
@@ -25,6 +25,6 @@ jobs:
 
       - run: npm ci
 
-      # 三张网跑在内存假库上，不需要 Cloudflare 凭据
+      # 七张网跑在内存假库与静态源码上，不需要 Cloudflare 凭据
       - name: Smoke / attack probes / mutation gate
         run: npm test

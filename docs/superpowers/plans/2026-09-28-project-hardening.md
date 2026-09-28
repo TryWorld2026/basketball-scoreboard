@@ -44,10 +44,10 @@
 
 ## Task 4: Make display stale/error states trustworthy
 
-- [ ] Add failing tests for invalid-room rendering and freezing the last trusted clock when stale.
-- [ ] Render loading, missing-room, and recoverable network states instead of leaving a blank display.
-- [ ] Freeze display clock/shot clock while stale; refresh immediately on recovery; do not emit stale zero-time events.
-- [ ] Verify the active and recovered display behavior in a browser test.
+- [x] Add failing tests for invalid-room rendering and freezing the last trusted clock when stale.
+- [x] Render loading, missing-room, and recoverable network states instead of leaving a blank display.
+- [x] Freeze display clock/shot clock while stale; refresh immediately on recovery; do not emit stale zero-time events.
+- [ ] Verify the active and recovered display behavior in a browser test.（未做：本仓库没有浏览器测试基建。已用 displayPhase 单元测试 + display.js 静态断言 + store 冻结行为测试覆盖；要上真浏览器验证需先引入 Playwright，见 Task 5）
 
 ## Task 5: Add real integration gates
 
