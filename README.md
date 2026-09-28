@@ -73,6 +73,17 @@ node dev/d1-check.mjs                         # 本地默认 http://127.0.0.1:87
 D1_CHECK_ALLOW_REMOTE=1 node dev/d1-check.mjs https://<你的域名>  # 显式确认后才打远程写探针（35 项）
 ```
 
+### 真浏览器旅程门禁（可选）
+
+```bash
+npm install                                  # 已含 @playwright/test（devDependency）
+npx playwright install chromium              # 浏览器二进制首次要单独装
+npm run dev                                  # 另起一个终端
+npm run test:ui                              # 或 UI_BASE_URL=http://127.0.0.1:8787 npm run test:ui
+```
+
+无头 Chromium 按 iPhone 视口跑一遍关键旅程：建赛 → 房间页找回码区块 → 控制端记分 → 大屏同步 → 数据卡操作记录 → 错码/对码补发 → 无凭证设备提示，全程监听未捕获页面异常，截图落在 `.ui-shots/`。它抓的是 HTTP 探针和静态断言抓不到的那一类——审计列表渲染出「false」文本节点，就是截图才发现的。CI 的 `ui` job 跑同一条命令。
+
 ## 架构
 
 ```
@@ -145,7 +156,7 @@ npm run test:e2e
 
 Cloudflare Workers · D1 · 原生 ES Module · Web Audio（合成蜂鸣，无音频文件）· WakeLock（防锁屏）· Canvas（数据卡导出）· wrangler
 
-**运行时零依赖**：前端没有框架和构建步骤，后端没有第三方包。
+**运行时零依赖**：前端没有框架和构建步骤，后端没有第三方包。`@playwright/test` 只是 devDependency，仅供可选的 `npm run test:ui` 真浏览器门禁使用，不进运行时。
 
 ## 已知边界
 

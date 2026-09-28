@@ -137,7 +137,7 @@ export default {
     });
     const recRoom = h('input', {
       class: 'inp code-input', maxlength: 4, placeholder: '4K7P', autocapitalize: 'characters',
-      autocomplete: 'off', spellcheck: false, 'aria-label': '房间码',
+      autocomplete: 'off', spellcheck: false, 'aria-label': '房间码（找回控制权）',
       oninput: (e) => { e.target.value = e.target.value.toUpperCase().replace(/[^2-9A-HJ-NP-Z]/g, '').slice(0, 4); },
       onkeydown: (e) => { if (e.key === 'Enter') onRecover(); },
     });

@@ -28,7 +28,9 @@ npm test
 - 改 `worker/rules.mjs` 的时钟逻辑，`dev/parity.mjs` 会比对 `public/js/clock.js` 的镜像实现；只改一边必红。
 - `public/js/clock.js` 里**只服务前端的判定**（如 `periodNextFinishes` 决定要不要弹确认）不往 `worker/rules.mjs` 放镜像副本，而是由 `dev/parity.mjs` 直接拿服务端 `applyAction` 的落库结果反锁——判定和服务端行为不一致时，那条用例会红。
 
-CI（`.github/workflows/test.yml`）会在每次 push 和 PR 上跑七张内存/静态测试网，以及独立的 `local-d1` 真实 Worker + 本地 D1 门禁；部署走 Cloudflare Workers Builds，与本仓库的测试门禁互不相干。
+CI（`.github/workflows/test.yml`）会在每次 push 和 PR 上跑：`npm test` 七张内存/静态测试网、独立的 `local-d1` 真实 Worker + 本地 D1 门禁、以及 `ui` 真浏览器旅程门禁；部署走 Cloudflare Workers Builds（实测 Git 集成可能没接上，届时用 `npx wrangler deploy` 手动补），与本仓库的测试门禁互不相干。
+
+**真浏览器门禁**：`npm run test:ui`（先 `npm install` + `npx playwright install chromium`，另起终端跑 `npm run dev`，或用 `UI_BASE_URL` 指向已在跑的实例）。它按 iPhone 视口无头跑完关键旅程并截图到 `.ui-shots/`——本项目一半的 UI 坑只在真浏览器里现形（审计列表渲染出「false」文本节点就是截图才发现的），改 `public/js/views/*` 后请跑一遍。
 
 改动规则引擎时，优先运行 `npm run test:e2e`：它自动迁移本地 D1、启动临时 `wrangler dev`，再跑 35 项真实 SQL 链路，不需要 Cloudflare 凭据，也不碰生产。`node dev/d1-check.mjs <remoteBaseUrl>` 默认拒绝远程写探针，只有设置 `D1_CHECK_ALLOW_REMOTE=1` 才允许。
 

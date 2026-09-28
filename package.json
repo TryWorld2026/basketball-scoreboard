@@ -9,10 +9,12 @@
     "deploy": "wrangler deploy",
     "db:migrate:local": "wrangler d1 migrations apply scoreboard-db --local",
     "db:migrate:remote": "wrangler d1 migrations apply scoreboard-db --remote",
+    "test": "node dev/smoke.mjs && node dev/attack.mjs && node dev/store.mjs && node dev/parity.mjs && node dev/mobile.mjs && node dev/display.mjs && node dev/mutate.mjs",
     "test:e2e": "node dev/e2e-local.mjs",
-    "test": "node dev/smoke.mjs && node dev/attack.mjs && node dev/store.mjs && node dev/parity.mjs && node dev/mobile.mjs && node dev/display.mjs && node dev/mutate.mjs"
+    "test:ui": "node dev/ui-check.mjs"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "wrangler": "^4.112.0"
   }
 }

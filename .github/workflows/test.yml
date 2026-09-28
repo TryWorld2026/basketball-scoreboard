@@ -1,7 +1,7 @@
 name: Test
 
 # 部署由 Cloudflare Workers Builds 负责（GitHub 侧不存任何凭据）。
-# 这里只做一件事：把七张测试网当合并门禁跑一遍。
+# 这里只做一件事：把测试网当合并门禁跑一遍——npm test 七张 + 真实 D1 + 真浏览器旅程。
 
 on:
   push:
@@ -44,3 +44,34 @@ jobs:
       # 只打本地 Wrangler + 本地 D1；不需要、不读取任何 Cloudflare 凭据，也不碰生产库。
       - name: Local D1 / real Worker HTTP gate
         run: npm run test:e2e
+
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # 无头 Chromium 的二进制不走 npm，要单独装（含系统依赖）。
+      - name: Install Chromium for Playwright
+        run: npx playwright install chromium --with-deps
+
+      # 真浏览器跑关键旅程：建赛→找回码区块→记分→大屏同步→数据卡操作记录→补发换锁。
+      # 这些是 HTTP 探针和静态断言抓不到的——「false」文本节点就是截图才发现的。
+      - name: Real browser journey gate
+        run: |
+          npx wrangler dev --port 8798 --ip 127.0.0.1 &
+          DEV_PID=$!
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8798/ > /dev/null; then break; fi
+            sleep 1
+          done
+          UI_BASE_URL=http://127.0.0.1:8798 npm run test:ui
+          STATUS=$?
+          kill $DEV_PID 2>/dev/null || true
+          exit $STATUS
