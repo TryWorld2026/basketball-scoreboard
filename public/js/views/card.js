@@ -341,7 +341,11 @@ export default {
           h('span', { class: 'log-act' }, logLabel(e)),
           h('span', { class: 'log-score' }, `${e.before_score} → ${e.after_score}`),
           h('span', { class: 'log-actor' }, e.actor))),
-        entries.length > 12 && h('p', { class: 'muted small' }, `……还有 ${entries.length - 12} 条，完整记录以服务端为准`));
+        // 注意：这里不能写 `cond && h(...)`——false 会被 replaceChildren 当成文本节点渲染出「false」
+        // （实测在截图里看到过）。超长提示要么整块给，要么不给。
+        ...(entries.length > 12
+          ? [h('p', { class: 'muted small' }, `……还有 ${entries.length - 12} 条，完整记录以服务端为准`)]
+          : []));
     };
     const loadLog = async () => {
       try { paintLog((await api(`/api/game?action=log&code=${encodeURIComponent(code)}`)).entries || []); }

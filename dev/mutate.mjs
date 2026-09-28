@@ -404,6 +404,15 @@ const mutants = [
     to: `api('/api/game?action=create', { method: 'POST', body: { code, recovery } })`,
     suite: 'mobile', mustRedOn: '首页提供找回码换发表单',
   },
+  {
+    name: 'M48 审计列表退回裸 && h(...)（数据卡底部渲染出「false」文本节点）',
+    file: CARDJS,
+    from: `        ...(entries.length > 12
+          ? [h('p', { class: 'muted small' }, \`……还有 \${entries.length - 12} 条，完整记录以服务端为准\`)]
+          : []));`,
+    to: `        entries.length > 12 && h('p', { class: 'muted small' }, \`……还有 \${entries.length - 12} 条，完整记录以服务端为准\`));`,
+    suite: 'mobile', mustRedOn: '审计列表超长提示用展开三元（不是裸 &&）',
+  },
 ];
 
 const runSuite = (which) => {

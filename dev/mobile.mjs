@@ -198,5 +198,13 @@ check('首页提供找回码换发表单', /action=recover/.test(HOME) && /换�
 check('换发成功后保存新令牌与新找回码',
   /rememberControlToken\(res\.code, res\.controlToken\)/.test(HOME) && /rememberRecoveryCode\(res\.code, res\.recoveryCode\)/.test(HOME));
 
+// ---------- 10. replaceChildren 不吃 false ----------
+// 实测踩过（真浏览器截图里看到的）：审计列表写过
+// `entries.length > 12 && h('p', ...)`，false 被 replaceChildren 当成文本节点，
+// 数据卡底部渲染出一个光秃秃的「false」。h() 会过滤假值，replaceChildren 不会——
+// 条件块要么整块给（展开三元），要么不给。
+console.log('— replaceChildren 条件块 —');
+check('审计列表超长提示用展开三元（不是裸 &&）', /\.\.\.\(entries\.length > 12/.test(CARD), 'card.js 又是 cond && h(...) 直接传给 replaceChildren');
+
 console.log(`通过 ${pass} / 失败 ${fail}`);
 process.exit(fail ? 1 : 0);
