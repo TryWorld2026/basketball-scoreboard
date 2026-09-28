@@ -50,6 +50,11 @@ console.log('— 静态资源与路由 —');
   ok('SPA 深链回退到 index.html', deep.status === 200 && (await deep.text()).includes('<div id="app"'));
   const css = await fetch(`${BASE}/styles.css`);
   ok('样式以 CSS 类型返回', css.status === 200 && /text\/css/.test(css.headers.get('content-type') || ''), css.headers.get('content-type'));
+  const home2 = await fetch(`${BASE}/`);
+  ok('首页带 frame-ancestors none + nosniff（静态响应确实过了 Worker）',
+    (home2.headers.get('content-security-policy') || '').includes("frame-ancestors 'none'")
+      && home2.headers.get('x-content-type-options') === 'nosniff',
+    `csp=${home2.headers.get('content-security-policy')} nosniff=${home2.headers.get('x-content-type-options')}`);
   const js = await fetch(`${BASE}/js/app.js`);
   ok('ES module 以 JS 类型返回', js.status === 200 && /javascript/.test(js.headers.get('content-type') || ''), js.headers.get('content-type'));
   const missing = await fetch(`${BASE}/api/unknown`);

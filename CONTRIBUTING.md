@@ -30,7 +30,7 @@ npm test
 
 CI（`.github/workflows/test.yml`）会在每次 push 和 PR 上跑七张内存/静态测试网，以及独立的 `local-d1` 真实 Worker + 本地 D1 门禁；部署走 Cloudflare Workers Builds，与本仓库的测试门禁互不相干。
 
-改动规则引擎时，优先运行 `npm run test:e2e`：它自动迁移本地 D1、启动临时 `wrangler dev`，再跑 34 项真实 SQL 链路，不需要 Cloudflare 凭据，也不碰生产。`node dev/d1-check.mjs <remoteBaseUrl>` 默认拒绝远程写探针，只有设置 `D1_CHECK_ALLOW_REMOTE=1` 才允许。
+改动规则引擎时，优先运行 `npm run test:e2e`：它自动迁移本地 D1、启动临时 `wrangler dev`，再跑 35 项真实 SQL 链路，不需要 Cloudflare 凭据，也不碰生产。`node dev/d1-check.mjs <remoteBaseUrl>` 默认拒绝远程写探针，只有设置 `D1_CHECK_ALLOW_REMOTE=1` 才允许。
 
 ## 代码结构约定
 

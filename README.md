@@ -55,11 +55,11 @@ npm test
 | 套件 | 覆盖 | 规模 |
 |---|---|---|
 | `dev/smoke.mjs` | 主流程：建赛、计分、撤销、犯规、节次、加时、锁定、校验、24 秒链路、全场累计犯规 | 34 项 |
-| `dev/attack.mjs` | 对抗探针：幂等、并发丢分、跳节滥用、类型强制、不可逆性、无界增长、注入面、协议健壮性、撤销吞时间、限流、房间清理、控制凭证对抗面、幂等 30 条窗口硬边界、操作审计全链路、服务端到点推进、控制权补发、Worker 入口与部署配置安全响应头 | 145 项 |
+| `dev/attack.mjs` | 对抗探针：幂等、并发丢分、跳节滥用、类型强制、不可逆性、无界增长、注入面、协议健壮性、撤销吞时间、限流、房间清理、控制凭证对抗面、幂等 30 条窗口硬边界、操作审计全链路、服务端到点推进、控制权补发、Worker 入口与部署配置安全响应头 | 147 项 |
 | `dev/store.mjs` | 前端仓库层：断网排队、按序补发、nonce、乱序响应丢弃、冲突刷新、脏队列降级、控制凭证只上写路径、离线队列边界、大屏 stale 冻结 | 39 项 |
 | `dev/parity.mjs` | **双端时钟镜像一致性**：`worker/rules.mjs` 与 `public/js/clock.js` 两份 `derive*` 逐场景必须相等；并用服务端 `applyAction` 的真实落库结果反锁「下一节」终局判定 | 49 项 |
 | `dev/mobile.mjs` | **移动端兼容性**：390px 真媒体查询下实测过的修复，逐个钉成静态断言——触控目标 ≥ 44px（Apple HIG）、`color-mix` 必须有纯色兜底（iOS 16.2 以下会整条丢弃）、`backdrop-filter` 带 `-webkit-` 前缀（iOS 18 以下只认前缀版）、不锁死捏合缩放、数据卡保存走 `navigator.share` 分享面板（iOS 至今不认 `<a download>`）、赛后操作记录接线、快捷键修饰键过滤、控制权补发接线、replaceChildren 条件块形态 | 41 项 |
-| `dev/mutate.mjs` | **变异测试**：把每处修复逐个还原，断言测试网必须变红在该管它的断言上；跑前先验证基线全绿 | 49 个变异体 |
+| `dev/mutate.mjs` | **变异测试**：把每处修复逐个还原，断言测试网必须变红在该管它的断言上；跑前先验证基线全绿 | 50 个变异体 |
 | `dev/display.mjs` | **大屏状态**：`displayPhase` 逐场景判定（房间不存在 / 加载中 / 重连 / 等待开赛 / 终局 / 直播 / 信号弱）+ display.js 照判定接线的静态断言 | 16 项 |
 
 变异测试是这里的关键——它证明断言不是空的。本项目实测中它抓出过一条空断言（只验了"平局会进加时"，从没验"分出胜负必须结束"），补探针后才闭上。
@@ -70,7 +70,7 @@ npm test
 
 ```bash
 node dev/d1-check.mjs                         # 本地默认 http://127.0.0.1:8788
-D1_CHECK_ALLOW_REMOTE=1 node dev/d1-check.mjs https://<你的域名>  # 显式确认后才打远程写探针（34 项）
+D1_CHECK_ALLOW_REMOTE=1 node dev/d1-check.mjs https://<你的域名>  # 显式确认后才打远程写探针（35 项）
 ```
 
 ## 架构
@@ -139,7 +139,7 @@ Connect to Git，选本仓库、生产分支 `main`。此后每次 push 到 `mai
 npm run test:e2e
 ```
 
-该命令会执行本地迁移，启动临时 `wrangler dev`，再用真实 HTTP + 本地 D1 跑 `dev/d1-check.mjs`，结束后自动关闭 Worker。它不读取 Cloudflare 凭据，也不会触碰生产库；CI 的 `local-d1` job 跑的是同一条命令。当前真实 SQL 链路共 34 项（含 cron 到点推进与控制权补发）。远程验证必须显式设置 `D1_CHECK_ALLOW_REMOTE=1`，防止误把写探针打到生产。
+该命令会执行本地迁移，启动临时 `wrangler dev`，再用真实 HTTP + 本地 D1 跑 `dev/d1-check.mjs`，结束后自动关闭 Worker。它不读取 Cloudflare 凭据，也不会触碰生产库；CI 的 `local-d1` job 跑的是同一条命令。当前真实 SQL 链路共 35 项（含静态响应安全头、cron 到点推进、控制权补发）。远程验证必须显式设置 `D1_CHECK_ALLOW_REMOTE=1`，防止误把写探针打到生产。
 
 ## 技术栈
 

@@ -421,11 +421,18 @@ const mutants = [
     to: `    "run_worker_first": ["/api/*"]`,
     suite: 'attack', mustRedOn: '静态请求全部走 Worker（HTML 页才拿得到 frame-ancestors）',
   },
+  {
+    name: 'M50 assets 绑定名被改坏（env.ASSETS 取不到静态资源，全站 500）',
+    file: WRANGLERJSONC,
+    from: `    "binding": "ASSETS"`,
+    to: `    "binding": "STATIC"`,
+    suite: 'attack', mustRedOn: 'assets 绑定显式声明为 ASSETS（与 index.js 读取的一致）',
+  },
 ];
 
 const runSuite = (which) => {
   const r = spawnSync(process.execPath, [`dev/${which}.mjs`], { encoding: 'utf8', cwd: process.cwd() });
-  return `${r.stdout || ''}${r.stderr || ''}`;
+  return { out: `${r.stdout || ''}${r.stderr || ''}`, code: r.status ?? 1 };
 };
 
 // ---------- 基线必须全绿 ----------
@@ -448,10 +455,10 @@ const suites = [...new Set(mutants.map((m) => m.suite))];
 console.log(`基线检查：未注入变异体时 ${suites.join(' / ')} 必须全绿`);
 let baselineBad = false;
 for (const s of suites) {
-  const out = runSuite(s);
-  if (/(ATTACK|FAIL)/.test(out)) {
+  const { out, code } = runSuite(s);
+  if (code !== 0 || /(ATTACK|FAIL)/.test(out)) {
     baselineBad = true;
-    console.log(`ABORT  基线就是红的（${s}），先修测试再跑变异——否则每个变异体都会被误判成 killed：\n${out}`);
+    console.log(`ABORT  基线就是红的（${s}，exit=${code}），先修测试再跑变异——否则每个变异体都会被误判成 killed：\n${out}`);
   }
 }
 if (baselineBad) process.exit(1);
@@ -470,17 +477,20 @@ for (const m of mutants) {
   }
   currentFile = m.file; currentOriginal = original;
   writeFileSync(m.file, original.replace(m.from, m.to));
-  let out = '';
-  try { out = runSuite(m.suite); } finally { restore(); }
+  let run = { out: '', code: 1 };
+  try { run = runSuite(m.suite); } finally { restore(); }
   if (readFileSync(m.file, 'utf8') !== original) {
     console.log(`ABORT  ${m.name} —— 还原失败，请执行 git checkout -- ${m.file}`);
     process.exit(1);
   }
   const redRe = new RegExp(`(ATTACK|FAIL)\\s+.*${m.mustRedOn.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`);
-  const redOnTarget = redRe.test(out);
-  const anyRed = /(ATTACK|FAIL)/.test(out);
+  const redOnTarget = redRe.test(run.out);
+  const anyRed = /(ATTACK|FAIL)/.test(run.out);
   if (redOnTarget) { killed += 1; console.log(`killed     ${m.name}  →  红在「${m.mustRedOn}」`); }
   else if (anyRed) { misattributed += 1; console.log(`MISATTR    ${m.name}  →  变红了但没红在该断言上（断言问错了问题）`); }
+  // 退出码非零但没有任何 ATTACK/FAIL 文本 = 探针崩了（异常/解析错误），不是变红。
+  // 曾把这条判成 SURVIVED，等于告诉人「这个修复没被测到」——而事实是测试自己炸了。
+  else if (run.code !== 0) { misattributed += 1; console.log(`MISATTR    ${m.name}  →  探针崩了（exit=${run.code} 且无 ATTACK/FAIL），不是变红；崩因：\n${run.out.split('\n').slice(-6).join('\n')}`); }
   else { survived += 1; console.log(`SURVIVED   ${m.name}  →  测试网全绿，这个修复从未被测到`); }
 }
 

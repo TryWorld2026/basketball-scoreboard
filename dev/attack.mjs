@@ -597,10 +597,20 @@ console.log('\n[20] Worker 入口：安全响应头与路由（真实 fetch 形�
   // Worker 的包装逻辑根本没被调用），而 API 响应是好的，极具迷惑性。
   const wranglerRaw = readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+    // 容忍尾逗号：否则配置里少一行就让 JSON.parse 抛异常——探针「崩了」
+    // 和「变红」是两回事，崩了会被变异门禁误判成存活（实测踩过）
+    .replace(/,(\s*[}\]])/g, '$1');
   const assetsCfg = JSON.parse(wranglerRaw).assets || {};
   ok('静态请求全部走 Worker（HTML 页才拿得到 frame-ancestors）',
     assetsCfg.run_worker_first === true, `run_worker_first=${JSON.stringify(assetsCfg.run_worker_first)}`);
+  // 绑定名必须显式声明且与 index.js 里用的一致：上线实测过——没声明时
+  // env.ASSETS 是 undefined，`env.ASSETS.fetch` 直接 TypeError，全站 500。
+  // （攻击网的桩永远注得出 ASSETS，抓不到这类「配置与代码对不上」。）
+  ok('assets 绑定显式声明为 ASSETS（与 index.js 读取的一致）',
+    assetsCfg.binding === 'ASSETS', `binding=${JSON.stringify(assetsCfg.binding)}`);
+  const indexSrc = readFileSync(new URL('../worker/index.js', import.meta.url), 'utf8');
+  ok('index.js 只从 env.ASSETS 取静态资源', /env\.ASSETS\.fetch/.test(indexSrc) && !/env\.ASSETS2|env\.assets\b/.test(indexSrc));
 }
 
 console.log('\n[21] 服务端到点推进：记分员手机不在场，比赛也不能卡在 00:00');
