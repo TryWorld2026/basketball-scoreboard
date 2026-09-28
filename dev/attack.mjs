@@ -4,6 +4,7 @@ import { handleGames, advanceDueGames } from '../worker/handler.mjs';
 import { applyAction, deriveClock, emptyState, sanitizeConfig, sanitizeTeams } from '../worker/rules.mjs';
 import { createRateLimiter } from '../worker/ratelimit.mjs';
 import { createFakeStore } from './fake-store.mjs';
+import { readFileSync } from 'node:fs';
 
 let pass = 0; let fail = 0; const bugs = [];
 const ok = (name, cond, detail = '') => {
@@ -589,6 +590,17 @@ console.log('\n[20] Worker 入口：安全响应头与路由（真实 fetch 形�
 
   const noDb = await worker.fetch(new Request('http://s/api/game?action=get&code=AB23'), { ASSETS: env.ASSETS });
   ok('没绑 D1 时 API 503 且同样带安全头', noDb.status === 503 && csp(noDb).includes("frame-ancestors 'none'"), `${noDb.status} ${csp(noDb)}`);
+
+  // 部署配置：静态请求也必须进 Worker，否则 HTML 页拿不到安全头。
+  // 这不是理论担忧——上线后实测过：run_worker_first 只圈 /api/* 时，
+  // 大屏/控制端/房间页的响应里 frame-ancestors 整个缺失（Assets 直连，
+  // Worker 的包装逻辑根本没被调用），而 API 响应是好的，极具迷惑性。
+  const wranglerRaw = readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+  const assetsCfg = JSON.parse(wranglerRaw).assets || {};
+  ok('静态请求全部走 Worker（HTML 页才拿得到 frame-ancestors）',
+    assetsCfg.run_worker_first === true, `run_worker_first=${JSON.stringify(assetsCfg.run_worker_first)}`);
 }
 
 console.log('\n[21] 服务端到点推进：记分员手机不在场，比赛也不能卡在 00:00');

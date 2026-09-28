@@ -14,6 +14,7 @@ const CSSFILE = R('../public/styles.css');
 const CARDJS = R('../public/js/views/card.js');
 const ROOMJS = R('../public/js/views/room.js');
 const HOMEJS = R('../public/js/views/home.js');
+const WRANGLERJSONC = R('../wrangler.jsonc');
 
 const mutants = [
   {
@@ -412,6 +413,13 @@ const mutants = [
           : []));`,
     to: `        entries.length > 12 && h('p', { class: 'muted small' }, \`……还有 \${entries.length - 12} 条，完整记录以服务端为准\`));`,
     suite: 'mobile', mustRedOn: '审计列表超长提示用展开三元（不是裸 &&）',
+  },
+  {
+    name: 'M49 静态请求不再走 Worker（HTML 页丢掉 frame-ancestors，可被 iframe 诱导点击）',
+    file: WRANGLERJSONC,
+    from: `    "run_worker_first": true`,
+    to: `    "run_worker_first": ["/api/*"]`,
+    suite: 'attack', mustRedOn: '静态请求全部走 Worker（HTML 页才拿得到 frame-ancestors）',
   },
 ];
 
